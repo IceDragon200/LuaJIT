@@ -30,6 +30,15 @@ static const luaL_Reg lj_lib_load[] = {
 };
 
 static const luaL_Reg lj_lib_preload[] = {
+  { LUA_ENCODINGLIBNAME,	luaopen_encoding },
+  { LUA_TIMELIBNAME,	luaopen_time },
+  { LUA_UTF8LIBNAME,	luaopen_utf8 },
+#if LJ_HAS_PCRE2
+  { "regexp",		luaopen_regexp },
+#endif
+#if LJ_HAS_OPENSSL
+  { "crypto",		luaopen_crypto },
+#endif
 #if LJ_HASFFI
   { LUA_FFILIBNAME,	luaopen_ffi },
 #endif
@@ -52,4 +61,3 @@ LUALIB_API void luaL_openlibs(lua_State *L)
   }
   lua_pop(L, 1);
 }
-

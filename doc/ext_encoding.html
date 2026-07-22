@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental Encoding Library</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental Encoding Library</h1>
+</div>
+<div id="main">
+<p>
+This local experimental extension provides strict byte encoding helpers. It is
+preloaded by LuaJIT, but only made visible after <tt>require</tt>.
+</p>
+
+<pre class="code">
+local encoding = require("encoding")
+
+local hex = encoding.hex_encode("\0\255")  -- "00ff"
+local data = assert(encoding.hex_decode(hex))
+
+local token = encoding.base64url_encode(data)  -- no trailing padding
+local original = assert(encoding.base64url_decode(token))
+</pre>
+
+<h2>Functions</h2>
+<table class="table">
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><tt>hex_encode(data [, uppercase])</tt></td><td>Encode bytes as hexadecimal.</td></tr>
+<tr><td><tt>hex_decode(text)</tt></td><td>Decode hexadecimal bytes.</td></tr>
+<tr><td><tt>base64_encode(data)</tt></td><td>Encode RFC 4648 base64 with padding.</td></tr>
+<tr><td><tt>base64_decode(text)</tt></td><td>Decode strict, padded base64.</td></tr>
+<tr><td><tt>base64url_encode(data)</tt></td><td>Encode URL-safe base64 without padding.</td></tr>
+<tr><td><tt>base64url_decode(text)</tt></td><td>Decode URL-safe base64 with optional canonical padding.</td></tr>
+</table>
+<p>
+The decoding functions return <tt>nil, message</tt> for malformed input.
+Wrong Lua argument types still raise the ordinary Lua argument error.
+</p>
+</div>
+</body>
+</html>

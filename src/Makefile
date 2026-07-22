@@ -509,9 +509,37 @@ LJVM_O= lj_vm.o
 LJVM_BOUT= $(LJVM_S)
 LJVM_MODE= elfasm
 
-LJLIB_O= lib_base.o lib_math.o lib_bit.o lib_string.o lib_table.o \
+LJLIB_O= lib_base.o lib_math.o lib_bit.o lib_encoding.o lib_time.o lib_utf8.o lib_string.o lib_table.o \
 	 lib_io.o lib_os.o lib_package.o lib_debug.o lib_jit.o lib_ffi.o \
 	 lib_buffer.o
+
+# clock_gettime() is provided by librt on older glibc systems.
+ifeq (Linux,$(TARGET_SYS))
+  TARGET_XLIBS+= -lrt
+endif
+
+# Optional PCRE2-backed regexp module. Example:
+# make LJ_PCRE2=1 PCRE2_CFLAGS=-I/path/to/include PCRE2_LIBS=-lpcre2-8
+LJ_PCRE2?= 0
+PCRE2_CFLAGS?=
+PCRE2_LIBS?= -lpcre2-8
+ifeq ($(LJ_PCRE2),1)
+  CCOPT+= -DLJ_HAS_PCRE2=1 $(PCRE2_CFLAGS)
+  TARGET_XLIBS+= $(PCRE2_LIBS)
+  LJLIB_O+= lib_regexp.o
+endif
+
+# Optional OpenSSL-backed crypto module. A clean build is required when changing
+# this option, e.g. make clean && make LJ_OPENSSL=1 OPENSSL_CFLAGS=-I/path/include
+# OPENSSL_LIBS='-L/path/lib -lcrypto'.
+LJ_OPENSSL?= 0
+OPENSSL_CFLAGS?=
+OPENSSL_LIBS?= -lcrypto
+ifeq ($(LJ_OPENSSL),1)
+  CCOPT+= -DLJ_HAS_OPENSSL=1 $(OPENSSL_CFLAGS)
+  TARGET_XLIBS+= $(OPENSSL_LIBS)
+  LJLIB_O+= lib_crypto.o
+endif
 LJLIB_C= $(LJLIB_O:.o=.c)
 
 LJCORE_O= lj_assert.o lj_gc.o lj_err.o lj_char.o lj_bc.o lj_obj.o lj_buf.o \
@@ -632,6 +660,12 @@ E= @echo
 ##############################################################################
 
 default all:	$(TARGET_T)
+
+lib_time.o lib_utf8.o: lj_libdef.h
+
+ifeq ($(LJ_OPENSSL),1)
+lib_crypto.o: lj_libdef.h
+endif
 
 amalg:
 	$(MAKE) all "LJCORE_O=ljamalg.o"

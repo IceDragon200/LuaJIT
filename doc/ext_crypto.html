@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental Crypto Library</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental Crypto Library</h1>
+</div>
+<div id="main">
+<p>
+The optional <tt>crypto</tt> module is backed by OpenSSL. It is not included in
+a default build. Enable it with <tt>LJ_OPENSSL=1</tt>, providing include and
+link flags when OpenSSL is outside the compiler's standard search paths:
+</p>
+<pre class="code">
+make clean
+make LJ_OPENSSL=1 OPENSSL_CFLAGS=-I/path/to/include OPENSSL_LIBS='-L/path/to/lib -lcrypto'
+</pre>
+<pre class="code">
+local crypto = require("crypto")
+
+local key = crypto.random_bytes(32)
+local nonce = crypto.random_bytes(12)  -- never reuse with the same key
+local ciphertext, tag = crypto.aead_encrypt("chacha20-poly1305", key, nonce,
+                                            "hello", "version=1")
+local plaintext = assert(crypto.aead_decrypt("chacha20-poly1305", key, nonce,
+                                             ciphertext, "version=1", tag))
+</pre>
+
+<h2>Functions</h2>
+<table class="table">
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><tt>random_bytes(length)</tt></td><td>Return cryptographically strong random bytes from OpenSSL.</td></tr>
+<tr><td><tt>hash(name, data)</tt></td><td>Return a SHA-2 digest.</td></tr>
+<tr><td><tt>hmac(name, key, data)</tt></td><td>Return a SHA-2 HMAC.</td></tr>
+<tr><td><tt>hkdf(name, ikm, salt, info, length)</tt></td><td>Derive bytes using HKDF.</td></tr>
+<tr><td><tt>constant_time_equal(left, right)</tt></td><td>Compare equal-length byte strings without an early content exit.</td></tr>
+<tr><td><tt>aead_encrypt(algorithm, key, nonce, plaintext [, aad])</tt></td><td>Return <tt>ciphertext, tag</tt>.</td></tr>
+<tr><td><tt>aead_decrypt(algorithm, key, nonce, ciphertext, tag)</tt></td><td>Decrypt without associated data.</td></tr>
+<tr><td><tt>aead_decrypt(algorithm, key, nonce, ciphertext, aad, tag)</tt></td><td>Decrypt with associated data.</td></tr>
+</table>
+<p>
+Hash names are <tt>sha256</tt>, <tt>sha384</tt>, and <tt>sha512</tt>.
+AEAD algorithms are <tt>aes-256-gcm</tt> and <tt>chacha20-poly1305</tt>.
+Both require a 32-byte key, a 12-byte nonce, and produce or accept a 16-byte
+authentication tag. Authentication failures return
+<tt>nil, "authentication failed"</tt>; other invalid arguments raise ordinary
+Lua argument errors.
+</p>
+<p>
+Lua strings are immutable garbage-collected values and are not securely erased.
+This small API deliberately omits raw block ciphers, password hashing, key
+storage, and streaming interfaces. Use a unique nonce for every encryption
+under a given key.
+</p>
+</div>
+</body>
+</html>

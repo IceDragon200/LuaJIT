@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental UTF-8 Library</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental UTF-8 Library</h1>
+</div>
+<div id="main">
+<p>
+The local <tt>utf8</tt> module implements the Lua 5.3 UTF-8 library. Lua
+strings remain byte strings; this module provides explicit UTF-8 decoding,
+encoding, character iteration, and byte-offset conversion.
+</p>
+<pre class="code">
+local utf8 = require("utf8")
+local text = utf8.char(0x1f980, 0x20, 0x4c, 0x75, 0x61)
+
+assert(utf8.len(text) == 5)
+for byte_position, codepoint in utf8.codes(text) do
+  print(byte_position, codepoint)
+end
+</pre>
+<h2>Functions</h2>
+<table class="table">
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><tt>char(...)</tt></td><td>Encode Unicode code points as one UTF-8 string.</td></tr>
+<tr><td><tt>codepoint(s [, i [, j]])</tt></td><td>Return the code points that start in byte range <tt>[i, j]</tt>.</td></tr>
+<tr><td><tt>codes(s)</tt></td><td>Return a generic-for iterator yielding byte position and code point.</td></tr>
+<tr><td><tt>len(s [, i [, j]])</tt></td><td>Return the character count, or <tt>nil, byte_position</tt> for malformed UTF-8.</td></tr>
+<tr><td><tt>offset(s, n [, i])</tt></td><td>Convert a character offset to a one-based byte position.</td></tr>
+<tr><td><tt>charpattern</tt></td><td>A Lua pattern that matches one UTF-8 character-shaped byte sequence.</td></tr>
+</table>
+<p>
+The behavior and positions follow Lua 5.3. Positions are byte positions, not
+grapheme positions: a visible character made from multiple code points still
+has multiple UTF-8 characters here.
+</p>
+</div>
+</body>
+</html>

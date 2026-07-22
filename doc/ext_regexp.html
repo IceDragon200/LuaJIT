@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental Regexp Library</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental Regexp Library</h1>
+</div>
+<div id="main">
+<p>
+The optional <tt>regexp</tt> module wraps PCRE2. It is not present in a
+default build. Enable it with <tt>LJ_PCRE2=1</tt> and provide any necessary
+include and link flags:
+</p>
+<pre class="code">
+make clean
+make LJ_PCRE2=1 PCRE2_CFLAGS=-I/path/to/include PCRE2_LIBS=-lpcre2-8
+</pre>
+<pre class="code">
+local regexp = require("regexp")
+local rx = assert(regexp.compile("^(?&lt;kind&gt;[a-z]+)-(\\d+)$", "i"))
+local first, last, kind, id = rx:find("Send-42")
+-- first == 1, last == 7, kind == "Send", id == "42"
+</pre>
+
+<h2>Functions</h2>
+<table class="table">
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><tt>compile(pattern [, flags])</tt></td><td>Compile a PCRE2 pattern, returning <tt>pattern</tt> or <tt>nil, message</tt>.</td></tr>
+<tr><td><tt>pattern:find(subject [, start])</tt></td><td>Return one-based start and inclusive end positions followed by capture strings. Return no values when there is no match.</td></tr>
+<tr><td><tt>escape(text)</tt></td><td>Quote text for literal use inside a PCRE2 pattern.</td></tr>
+</table>
+<p>
+Flags are <tt>i</tt> (case-insensitive), <tt>m</tt> (multiline), <tt>s</tt>
+(dot matches newline), <tt>u</tt> (UTF-8 and Unicode properties), and
+<tt>x</tt> (extended mode). Compiled patterns are userdata and release their
+PCRE2 code when collected.
+</p>
+</div>
+</body>
+</html>

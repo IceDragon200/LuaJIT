@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental Time Library</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental Time Library</h1>
+</div>
+<div id="main">
+<p>
+The local <tt>time</tt> extension provides high-resolution clocks without
+adding a scheduler or a sleep function. It is preloaded by LuaJIT and is made
+visible with <tt>require</tt>.
+</p>
+<pre class="code">
+local time = require("time")
+
+local started = time.monotonic()
+-- Run a frame, benchmark an operation, or advance an emulator.
+local elapsed = time.monotonic() - started
+</pre>
+
+<h2>Functions</h2>
+<table class="table">
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><tt>monotonic()</tt></td><td>Return high-resolution elapsed seconds from a clock that does not move backwards when the system time is adjusted.</td></tr>
+<tr><td><tt>wall()</tt></td><td>Return fractional Unix epoch seconds for timestamps. The system clock may jump forwards or backwards.</td></tr>
+<tr><td><tt>cpu()</tt></td><td>Return process CPU seconds, equivalent in meaning to <tt>os.clock()</tt>.</td></tr>
+</table>
+<p>
+Use <tt>monotonic()</tt> for elapsed-time measurement, real-time emulation,
+and benchmarking. Use <tt>wall()</tt> only when an externally meaningful date
+or timestamp is needed. All results are Lua numbers in seconds; the API does
+not expose an ostensibly exact nanosecond integer because ordinary LuaJIT
+numbers are floating point.
+</p>
+<p>
+The implementation uses <tt>mach_absolute_time</tt> on Apple platforms,
+<tt>clock_gettime(CLOCK_MONOTONIC)</tt> on POSIX platforms, and
+<tt>QueryPerformanceCounter</tt> on Windows. It intentionally offers no sleep
+or wait primitive.
+</p>
+</div>
+</body>
+</html>

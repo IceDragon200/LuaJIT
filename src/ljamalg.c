@@ -85,7 +85,16 @@
 #include "lib_package.c"
 #include "lib_debug.c"
 #include "lib_bit.c"
+#include "lib_encoding.c"
+#include "lib_time.c"
+#include "lib_utf8.c"
 #include "lib_jit.c"
+#if LJ_HAS_PCRE2
+#include "lib_regexp.c"
+#endif
+#if LJ_HAS_OPENSSL
+#include "lib_crypto.c"
+#endif
 #include "lib_ffi.c"
 #include "lib_buffer.c"
 #include "lib_init.c"
