@@ -36,6 +36,7 @@
 #include "lj_strscan.h"
 #include "lj_strfmt.h"
 #include "lj_lib.h"
+#include "lj_pattern.h"
 
 /* -- Base library: checks ------------------------------------------------ */
 
@@ -558,6 +559,40 @@ LJLIB_CF(print)
 LJLIB_PUSH(top-3)
 LJLIB_SET(_VERSION)
 
+LJLIB_CF(__bin_match)
+{
+  return lj_pattern_bin_match(L, lj_lib_checkstr(L, 1),
+			      lj_lib_checkstr(L, 2), L->base+2,
+			      (uint32_t)(L->top-(L->base+2)));
+}
+
+LJLIB_CF(__try_bin_match)
+{
+  return lj_pattern_try_bin_match(L, lj_lib_checkany(L, 1),
+			  lj_lib_checkstr(L, 2), L->base+2,
+			  (uint32_t)(L->top-(L->base+2)));
+}
+
+LJLIB_CF(__table_match)
+{
+  return lj_pattern_table_match(L, lj_lib_checktab(L, 1),
+					lj_lib_checkstr(L, 2), L->base+2,
+					(uint32_t)(L->top-(L->base+2)));
+}
+
+LJLIB_CF(__try_table_match)
+{
+  return lj_pattern_try_table_match(L, lj_lib_checkany(L, 1),
+				    lj_lib_checkstr(L, 2), L->base+2,
+				    (uint32_t)(L->top-(L->base+2)));
+}
+
+LJLIB_CF(__bin_build)
+{
+  return lj_pattern_bin_build(L, lj_lib_checkstr(L, 1), L->base+1,
+			      (uint32_t)(L->top-(L->base+1)));
+}
+
 #include "lj_libdef.h"
 
 /* -- Coroutine library --------------------------------------------------- */
@@ -706,4 +741,3 @@ LUALIB_API int luaopen_base(lua_State *L)
   LJ_LIB_REG(L, LUA_COLIBNAME, coroutine);
   return 2;
 }
-

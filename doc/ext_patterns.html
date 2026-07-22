@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental Pattern Matching</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental Pattern Matching</h1>
+</div>
+<div id="main">
+<p>
+This is a local experimental language extension. It lowers patterns to normal
+LuaJIT calls, jumps, and assignments; it does not add VM bytecodes.
+</p>
+
+<h2>Table patterns</h2>
+<pre class="code">
+local {"ok", .name, count = n} = reply
+local {header = {kind = "send", .flags}!} = packet
+</pre>
+<p>
+Bare names capture positional values. A leading dot captures a named key.
+Literal scalar values constrain a field or positional slot. A trailing
+<tt>!</tt> requires a present, non-nil value. <tt>_</tt> consumes a value
+without creating a binding.
+</p>
+<pre class="code">
+local {.kind, ...rest} = message
+</pre>
+<p>
+<tt>...rest</tt> captures a fresh, shallow table containing the direct fields
+not mentioned by this table pattern. It must be the final field. A nested rest
+captures at its own level; it does not flatten the parent table.
+</p>
+
+<h2>Binary patterns and construction</h2>
+<pre class="code">
+local bin{"P", kind &lt;u8&gt;, delta &lt;integer(16, little, signed)&gt;} = data
+
+local frame = bin!{
+  "P",
+  kind &lt;u8&gt;,
+  payload &lt;bytes&gt;
+}
+
+local bin{0xCA &lt;u8&gt;, 0xFE &lt;u8&gt;, version &lt;u8&gt;} = packet
+</pre>
+<p>
+Integer aliases are <tt>u8</tt>, <tt>u16</tt>, <tt>u24</tt>, <tt>u32</tt>,
+<tt>u40</tt>, <tt>u48</tt>, and their signed <tt>s*</tt> forms. Prefix an
+alias with <tt>le_</tt> for little-endian order. Float aliases are
+<tt>f16</tt>, <tt>f32</tt>, and <tt>f64</tt>. The wordy forms accept
+<tt>little</tt>, <tt>big</tt>, <tt>native</tt>, <tt>signed</tt>, and
+<tt>unsigned</tt>.
+</p>
+<pre class="code">
+local bin{position &lt;le_u16[3]&gt;} = data
+local data = bin!{position &lt;le_u16[3]&gt;}
+</pre>
+<p>
+Numeric vectors capture or construct a Lua array table. Fields remain
+byte-aligned; arbitrary bit-width fields are intentionally unsupported.
+</p>
+<p>
+Numbers may be used as typed binary literals in a pattern. The literal is
+encoded with its declared integer or float decoder and then compared byte for
+byte, so a float literal has the decoder's exact on-wire precision.
+</p>
+<p>
+Construction uses <tt>bin!{...}</tt>. The exclamation mark keeps ordinary Lua
+<tt>bin{...}</tt> calls available for the standard single-table-argument call
+syntax.
+</p>
+
+<h2>Case and pins</h2>
+<pre class="code">
+local result = case message do
+when {kind = ^expected_kind, .payload} if payload ~= "" then payload
+when bin{^magic, opcode &lt;u8&gt;} then opcode
+else nil
+end
+</pre>
+<p>
+The <tt>case</tt> subject is evaluated once. Clauses run in order and may use
+an <tt>if</tt> guard. A pin (<tt>^name</tt>) reads an already visible local,
+upvalue, or global and compares with raw Lua equality. Case may be used as a
+statement (with statement bodies) or as an expression (with one expression
+after each <tt>then</tt>).
+</p>
+
+<h2>Function parameters</h2>
+<pre class="code">
+local function handle({header = {kind = "send", .flags}!})
+  return flags
+end
+
+local function decode(bin{"P", kind &lt;u8&gt;})
+  return kind
+end
+</pre>
+<p>
+Parameter patterns are strict: a non-matching call raises the same match error
+as a strict local pattern.
+</p>
+
+<h2>Strict-match diagnostics</h2>
+<p>
+Strict binary matches report the byte where matching stopped. Strict table
+matches report the key or positional slot that failed. <tt>case</tt> clauses
+continue to treat a mismatch as an ordinary failed clause.
+</p>
+</div>
+</body>
+</html>

@@ -44,6 +44,7 @@
 #include "lj_profile.c"
 #include "lj_lex.c"
 #include "lj_parse.c"
+#include "lj_pattern.c"
 #include "lj_bcread.c"
 #include "lj_bcwrite.c"
 #include "lj_load.c"
@@ -88,4 +89,3 @@
 #include "lib_ffi.c"
 #include "lib_buffer.c"
 #include "lib_init.c"
-
