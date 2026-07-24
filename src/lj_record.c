@@ -1200,14 +1200,14 @@ static TRef rec_mm_len(jit_State *J, TRef tr, TValue *tv)
     base += LJ_FR2;
     basev += LJ_FR2;
     base[1] = tr; copyTV(J->L, basev+1, tv);
-#if LJ_52
-    base[2] = tr; copyTV(J->L, basev+2, tv);
-#else
-    base[2] = TREF_NIL; setnilV(basev+2);
-#endif
+    if (LJ_52 || (LJ_TABLE_LEN && tref_istab(tr))) {
+      base[2] = tr; copyTV(J->L, basev+2, tv);
+    } else {
+      base[2] = TREF_NIL; setnilV(basev+2);
+    }
     lj_record_call(J, func, 2);
   } else {
-    if (LJ_52 && tref_istab(tr))
+    if (LJ_TABLE_LEN && tref_istab(tr))
       return emitir(IRTI(IR_ALEN), tr, TREF_NIL);
     lj_trace_err(J, LJ_TRERR_NOMM);
   }
@@ -2453,8 +2453,6 @@ void lj_record_ins(jit_State *J)
   case BC_LEN:
     if (tref_isstr(rc))
       rc = emitir(IRTI(IR_FLOAD), rc, IRFL_STR_LEN);
-    else if (!LJ_52 && tref_istab(rc))
-      rc = emitir(IRTI(IR_ALEN), rc, TREF_NIL);
     else
       rc = rec_mm_len(J, rc, rcv);
     break;

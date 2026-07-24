@@ -127,6 +127,13 @@ default all $(INSTALL_DEP):
 	$(MAKE) -C src
 	@echo "==== Successfully built LuaJIT $(MMVERSION) ===="
 
+TEST_FILES= $(sort $(wildcard test/*_test.lua))
+
+test: all
+	@echo "==== Testing LuaJIT $(MMVERSION) ===="
+	@test -n "$(TEST_FILES)" || { echo "No test files found."; exit 1; }
+	./src/luajit test/run.lua $(TEST_FILES)
+
 install: $(INSTALL_DEP)
 	@echo "==== Installing LuaJIT $(VERSION) to $(PREFIX) ===="
 	$(MKDIR) $(INSTALL_DIRS)
@@ -170,6 +177,6 @@ amalg:
 clean:
 	$(MAKE) -C src clean
 
-.PHONY: all install amalg clean
+.PHONY: all install amalg clean test
 
 ##############################################################################

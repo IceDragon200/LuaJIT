@@ -559,6 +559,95 @@ LJLIB_CF(print)
 LJLIB_PUSH(top-3)
 LJLIB_SET(_VERSION)
 
+LJLIB_CF(__value_match)
+{
+  cTValue *expected = lj_lib_checkany(L, 1);
+  cTValue *actual = lj_lib_checkany(L, 2);
+  if (!lj_obj_equal(expected, actual))
+    lj_err_callermsg(L, "value pattern match failed");
+  return 0;
+}
+
+LJLIB_CF(__case_clause)
+{
+  lj_lib_checkany(L, 1);
+  lj_err_callermsg(L, "case clause did not match");
+  return 0;
+}
+
+/* The per-pack length metamethod deliberately reads n raw: named varargs
+** preserve nil holes, so the ordinary table length is not authoritative. */
+static int vararg_pack_len(lua_State *L)
+{
+  lua_pushliteral(L, "n");
+  lua_rawget(L, 1);
+  return 1;
+}
+
+LJLIB_CF(__vararg_pack)
+{
+  int n = (int)(L->top - L->base);
+  int i;
+
+  lua_createtable(L, n, 1);
+  for (i = 1; i <= n; i++) {
+    lua_pushvalue(L, i);
+    lua_rawseti(L, -2, i);
+  }
+  lua_pushinteger(L, n);
+  lua_setfield(L, -2, "n");
+  lua_createtable(L, 0, 1);
+  lua_pushcfunction(L, vararg_pack_len);
+  lua_setfield(L, -2, "__len");
+  lua_setmetatable(L, -2);
+  return 1;
+}
+
+LJLIB_CF(__vararg_unpack)
+{
+  GCtab *t = lj_lib_checktab(L, 1);
+  cTValue *ntv = lj_tab_getstr(t, lj_str_newlit(L, "n"));
+  int32_t n;
+  int i;
+
+  if (ntv == NULL || !tvisnumber(ntv))
+    lj_err_callermsg(L, "vararg spread expects a table with an integer n field");
+  if (tvisint(ntv)) {
+    n = intV(ntv);
+  } else {
+    int64_t i64;
+    if (!lj_num2int_check(numV(ntv), i64, n))
+      lj_err_callermsg(L, "vararg spread expects a table with an integer n field");
+  }
+  if (n < 0 || !lua_checkstack(L, n))
+    lj_err_callermsg(L, "invalid vararg spread length");
+  for (i = 1; i <= n; i++) {
+    cTValue *tv = lj_tab_getint(t, i);
+    if (tv) copyTV(L, L->top++, tv); else setnilV(L->top++);
+  }
+  return n;
+}
+
+/* Internal return protocol used by the experimental try statement.  Keep the
+** result tuple fixed-size so the parser can distinguish a relayed return from
+** an ordinary successful completion of the protected function. */
+LJLIB_CF(__try_return)
+{
+  int n = (int)(L->top - L->base);
+  int i;
+
+  lua_createtable(L, n, 1);
+  for (i = 1; i <= n; i++) {
+    lua_pushvalue(L, i);
+    lua_rawseti(L, -2, i);
+  }
+  lua_pushinteger(L, n);
+  lua_setfield(L, -2, "n");
+  lua_pushlstring(L, "\001lj_try_return", sizeof("\001lj_try_return")-1);
+  lua_insert(L, -2);
+  return 2;
+}
+
 LJLIB_CF(__bin_match)
 {
   return lj_pattern_bin_match(L, lj_lib_checkstr(L, 1),

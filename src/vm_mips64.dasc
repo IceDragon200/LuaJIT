@@ -1009,7 +1009,7 @@ static void build_subroutines(BuildCtx *ctx)
   |
   |->vmeta_len:
   |  // CARG2 already set by BC_LEN.
-#if LJ_52
+#if LJ_TABLE_LEN
   |  move MULTRES, CARG1
 #endif
   |  load_got lj_meta_len
@@ -1018,7 +1018,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  call_intern lj_meta_len		// (lua_State *L, TValue *o)
   |.  move CARG1, L
   |  // Returns NULL (retry) or TValue * (metamethod base).
-#if LJ_52
+#if LJ_TABLE_LEN
   |  bnez CRET1, ->vmeta_binop		// Binop call for compatibility.
   |.  nop
   |  b ->BC_LEN_Z
@@ -3859,7 +3859,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  daddiu AT, TMP1, -LJ_TTAB
     |  bnez AT, ->vmeta_len
     |.  nop
-#if LJ_52
+#if LJ_TABLE_LEN
     |  ld TAB:TMP2, TAB:CARG1->metatable
     |  bnez TAB:TMP2, >9
     |.  nop
@@ -3872,7 +3872,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  // Returns uint32_t (but less than 2^31).
     |  b <1
     |.  nop
-#if LJ_52
+#if LJ_TABLE_LEN
     |9:
     |  lbu TMP0, TAB:TMP2->nomm
     |  andi TMP0, TMP0, 1<<MM_len
@@ -5767,4 +5767,3 @@ static void emit_asm_debug(BuildCtx *ctx)
     break;
   }
 }
-

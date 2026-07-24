@@ -1251,7 +1251,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  b ->vm_call_dispatch
   |
   |->vmeta_len:
-#if LJ_52
+#if LJ_TABLE_LEN
   |  mr SAVE0, CARG1
 #endif
   |  mr CARG2, RD
@@ -1260,7 +1260,7 @@ static void build_subroutines(BuildCtx *ctx)
   |   stw PC, SAVE_PC
   |  bl extern lj_meta_len		// (lua_State *L, TValue *o)
   |  // Returns NULL (retry) or TValue * (metamethod base).
-#if LJ_52
+#if LJ_TABLE_LEN
   |  cmplwi CRET1, 0
   |  bne ->vmeta_binop			// Binop call for compatibility.
   |  mr CARG1, SAVE0
@@ -4040,7 +4040,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  ins_next2
     |2:
     |  checktab TMP0; bne ->vmeta_len
-#if LJ_52
+#if LJ_TABLE_LEN
     |  lwz TAB:TMP2, TAB:CARG1->metatable
     |  cmplwi TAB:TMP2, 0
     |  bne >9
@@ -4050,7 +4050,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  bl extern lj_tab_len		// (GCtab *t)
     |  // Returns uint32_t (but less than 2^31).
     |  b <1
-#if LJ_52
+#if LJ_TABLE_LEN
     |9:
     |  lbz TMP0, TAB:TMP2->nomm
     |  andix. TMP0, TMP0, 1<<MM_len
@@ -6317,4 +6317,3 @@ static void emit_asm_debug(BuildCtx *ctx)
     break;
   }
 }
-

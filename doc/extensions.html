@@ -373,7 +373,7 @@ Other features are only enabled, if LuaJIT is built with
 <li><tt>break</tt> can be placed anywhere. Empty statements (<tt>;;</tt>)
 are allowed.</li>
 <li><tt>__lt</tt>, <tt>__le</tt> are invoked for mixed types.</li>
-<li><tt>__len</tt> for tables. <tt>rawlen()</tt> library function.</li>
+<li><tt>rawlen()</tt> library function.</li>
 <li><tt>pairs()</tt> and <tt>ipairs()</tt> check for <tt>__pairs</tt> and
 <tt>__ipairs</tt>.</li>
 <li><tt>coroutine.running()</tt> returns two results.</li>
@@ -389,6 +389,10 @@ exit status.</li>
 <li><tt>package.searchers</tt>.</li>
 <li><tt>module()</tt> returns the module table.</li>
 </ul>
+<p>
+This fork enables <tt>__len</tt> for tables unconditionally. Tables without
+a <tt>__len</tt> metamethod retain normal raw length behavior.
+</p>
 <p>
 Note: this provides only partial compatibility with Lua 5.2 at the
 language and Lua library level. LuaJIT is API+ABI-compatible with

@@ -23,34 +23,57 @@ LuaJIT calls, jumps, and assignments; it does not add VM bytecodes.
 <h2>Table patterns</h2>
 <pre class="code">
 local {"ok", .name, count = n} = reply
-local {header = {kind = "send", .flags}!} = packet
+local {header = {kind = "send", flags}!} = packet
+
+local {x, y, z} = {x = 1, y = 2, z = 3}
+local {.first, .second, .third} = {1, 2, 3}
 </pre>
 <p>
-Bare names capture positional values. A leading dot captures a named key.
+Bare names capture named keys. A leading dot captures a positional value.
 Literal scalar values constrain a field or positional slot. A trailing
 <tt>!</tt> requires a present, non-nil value. <tt>_</tt> consumes a value
 without creating a binding.
 </p>
 <pre class="code">
-local {.kind, ...rest} = message
+local {kind, ...rest} = message
+local {^expected_kind, .^expected_first} = message
 </pre>
+<p>
+<tt>^name</tt> pins the named key <tt>name</tt>; <tt>.^name</tt> pins a
+positional slot. Use <tt>key = ^name</tt> when the key and pinned variable
+have different names.
+</p>
 <p>
 <tt>...rest</tt> captures a fresh, shallow table containing the direct fields
 not mentioned by this table pattern. It must be the final field. A nested rest
 captures at its own level; it does not flatten the parent table.
 </p>
 
+<h2>Scalar match assertions</h2>
+<pre class="code">
+local expected = 12
+12 = expected
+^expected = read_version()
+"ok" = status
+nil = result
+</pre>
+<p>
+Literal and pinned values may be used on the left of an assignment as strict
+match assertions. A pin reads an existing local, upvalue, or global. These
+comparisons use raw Lua equality, so an <tt>__eq</tt> metamethod is not invoked.
+</p>
+
 <h2>Binary patterns and construction</h2>
 <pre class="code">
-local bin{"P", kind &lt;u8&gt;, delta &lt;integer(16, little, signed)&gt;} = data
+local @b{"P", kind &lt;u8&gt;, delta &lt;integer(16, little, signed)&gt;} = data
 
-local frame = bin!{
+local frame = @b{
   "P",
   kind &lt;u8&gt;,
   payload &lt;bytes&gt;
 }
 
-local bin{0xCA &lt;u8&gt;, 0xFE &lt;u8&gt;, version &lt;u8&gt;} = packet
+local @b{0xCA &lt;u8&gt;, 0xFE &lt;u8&gt;, version &lt;u8&gt;} = packet
 </pre>
 <p>
 Integer aliases are <tt>u8</tt>, <tt>u16</tt>, <tt>u24</tt>, <tt>u32</tt>,
@@ -61,8 +84,8 @@ alias with <tt>le_</tt> for little-endian order. Float aliases are
 <tt>unsigned</tt>.
 </p>
 <pre class="code">
-local bin{position &lt;le_u16[3]&gt;} = data
-local data = bin!{position &lt;le_u16[3]&gt;}
+local @b{position &lt;le_u16[3]&gt;} = data
+local data = @b{position &lt;le_u16[3]&gt;}
 </pre>
 <p>
 Numeric vectors capture or construct a Lua array table. Fields remain
@@ -72,18 +95,22 @@ byte-aligned; arbitrary bit-width fields are intentionally unsupported.
 Numbers may be used as typed binary literals in a pattern. The literal is
 encoded with its declared integer or float decoder and then compared byte for
 byte, so a float literal has the decoder's exact on-wire precision.
+Signed typed literals use ordinary Lua syntax, for example
+<tt>@b{-128 &lt;s16&gt;}</tt>.
 </p>
 <p>
-Construction uses <tt>bin!{...}</tt>. The exclamation mark keeps ordinary Lua
-<tt>bin{...}</tt> calls available for the standard single-table-argument call
-syntax.
+<tt>@b{...}</tt> is the binary language sigil. In expression position it
+constructs a binary; in local declarations, assignments, function parameters,
+and <tt>case</tt> clauses it is a binary pattern. Ordinary <tt>bin{...}</tt>
+is never a pattern; it remains a regular Lua single-table-argument function
+call.
 </p>
 
 <h2>Case and pins</h2>
 <pre class="code">
 local result = case message do
-when {kind = ^expected_kind, .payload} if payload ~= "" then payload
-when bin{^magic, opcode &lt;u8&gt;} then opcode
+when {kind = ^expected_kind, payload} if payload ~= "" then payload
+when @b{^magic, opcode &lt;u8&gt;} then opcode
 else nil
 end
 </pre>
@@ -92,29 +119,87 @@ The <tt>case</tt> subject is evaluated once. Clauses run in order and may use
 an <tt>if</tt> guard. A pin (<tt>^name</tt>) reads an already visible local,
 upvalue, or global and compares with raw Lua equality. Case may be used as a
 statement (with statement bodies) or as an expression (with one expression
-after each <tt>then</tt>).
+after each <tt>then</tt>). If no clause matches, <tt>case</tt> raises
+<tt>case clause did not match</tt>; write <tt>else</tt> for an intentional
+fallback.
+</p>
+
+<h2>Try and catch</h2>
+<pre class="code">
+local function read_packet(data)
+  try do
+    local {kind = "packet", payload} = decode(data)
+    return payload, nil, #payload
+  catch {kind = "bad_packet", reason} then
+    return nil, reason
+  end
+end
+</pre>
+<p>
+The v1 form has one catch clause: <tt>try do ... catch pattern then ... end</tt>.
+The catch pattern may be a bare name (which binds the error object), <tt>_</tt>,
+a scalar literal or pin, a table pattern, or an <tt>@b{...}</tt> binary pattern.
+An unmatched catch rethrows the original error object. To match an exact string
+from Lua's <tt>error</tt>, use <tt>error(message, 0)</tt>; the ordinary default
+adds source location text to string errors.
+</p>
+<p>
+The protected body is compiled as an internal closure and called with
+<tt>pcall</tt>. A <tt>return</tt> inside it is relayed back to the enclosing
+function, preserving multiple results and <tt>nil</tt> holes. This is still
+ordinary existing bytecode: a closure call, branches, and a normal return.
+</p>
+<p>
+Because the closure is a control-flow boundary, <tt>break</tt> and
+<tt>continue</tt> may target loops defined <em>inside</em> the protected body,
+but cannot leave it to target an enclosing loop. Such uses are compile errors.
+Likewise, <tt>goto</tt> labels cannot cross the try boundary. A return in a
+nested function remains a return from that nested function, as in ordinary Lua.
 </p>
 
 <h2>Function parameters</h2>
 <pre class="code">
-local function handle({header = {kind = "send", .flags}!})
-  return flags
+local function handle({header = {kind = "send", flags}!} = packet)
+  return packet, flags
 end
 
-local function decode(bin{"P", kind &lt;u8&gt;})
-  return kind
+local function decode(@b{"P", kind &lt;u8&gt;} = frame)
+  return frame, kind
 end
 </pre>
 <p>
 Parameter patterns are strict: a non-matching call raises the same match error
-as a strict local pattern.
+as a strict local pattern. Appending <tt>= name</tt> binds the untouched input
+argument alongside the values captured by the pattern.
+</p>
+
+<h2>Named varargs</h2>
+<pre class="code">
+local function forward(prefix, ...parts)
+  print(#parts, parts.n)
+  return target(prefix, ...parts)
+end
+</pre>
+<p>
+Appending a name to the final <tt>...</tt> parameter packs the additional
+arguments into a fresh table. Its numeric slots preserve argument order and
+its <tt>n</tt> field preserves the exact count, including trailing or interior
+<tt>nil</tt> values. The pack's <tt>__len</tt> returns <tt>n</tt>, so
+<tt>#parts</tt> is a convenient synonym.
+</p>
+<p>
+Inside a call, <tt>...parts</tt> expands the table according to <tt>parts.n</tt>.
+It must be the final argument expression; use ordinary arguments before it.
+This lowers to normal helper calls plus existing vararg and multiple-call
+bytecode&mdash;no VM bytecodes are added.
 </p>
 
 <h2>Strict-match diagnostics</h2>
 <p>
 Strict binary matches report the byte where matching stopped. Strict table
-matches report the key or positional slot that failed. <tt>case</tt> clauses
-continue to treat a mismatch as an ordinary failed clause.
+matches report the key or positional slot that failed. Individual <tt>case</tt>
+clauses continue to treat a mismatch as an ordinary failed clause; only a case
+with no matching clause and no <tt>else</tt> raises an error.
 </p>
 </div>
 </body>

@@ -1,0 +1,12 @@
+local test = require("test.ljtest")
+local time = require("time")
+
+test.describe("time module", function()
+  test.it("exposes monotonic, wall, and CPU clocks", function(t)
+    local first = time.monotonic()
+    local second = time.monotonic()
+    t.assert(second >= first)
+    t.assert(time.wall() > 1)
+    t.assert(time.cpu() >= 0)
+  end)
+end)

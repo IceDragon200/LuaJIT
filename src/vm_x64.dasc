@@ -1082,7 +1082,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  call extern lj_meta_len		// (lua_State *L, TValue *o)
   |  // NULL (retry) or TValue * (metamethod) returned in eax (RC).
   |  mov BASE, L:RB->base
-#if LJ_52
+#if LJ_TABLE_LEN
   |  test RC, RC
   |  jne ->vmeta_binop			// Binop call for compatibility.
   |  movzx RDd, PC_RD
@@ -3350,7 +3350,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |2:
     |  cmp ITYPEd, LJ_TTAB; jne ->vmeta_len
     |  mov TAB:CARG1, TAB:RD
-#if LJ_52
+#if LJ_TABLE_LEN
     |  mov TAB:RB, TAB:RD->metatable
     |  cmp TAB:RB, 0
     |  jnz >9
@@ -3368,7 +3368,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  mov BASE, RB			// Restore BASE.
     |  movzx RAd, PC_RA
     |  jmp <1
-#if LJ_52
+#if LJ_TABLE_LEN
     |9:  // Check for __len.
     |  test byte TAB:RB->nomm, 1<<MM_len
     |  jnz <3
@@ -5193,4 +5193,3 @@ static void emit_asm_debug(BuildCtx *ctx)
     break;
   }
 }
-

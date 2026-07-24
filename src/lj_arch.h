@@ -733,6 +733,11 @@ extern void *LJ_WIN_LOADLIBA(const char *path);
 #define LJ_52			0
 #endif
 
+/* Tables honor __len, independently of the broader Lua 5.2 compatibility
+** switch. This is a small language extension: tables without __len keep the
+** normal raw length fast path. */
+#define LJ_TABLE_LEN		1
+
 /* -- VM security --------------------------------------------------------- */
 
 /* Don't make any changes here. Instead build with:

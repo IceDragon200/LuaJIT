@@ -390,6 +390,18 @@ static LexToken lex_scan(LexState *ls, TValue *tv)
       if (ls->c == '.') { lex_next(ls); return TK_nav; }
       if (ls->c == '?') { lex_next(ls); return TK_coal; }
       return '?';
+    case '@':
+      lex_next(ls);
+      if (lj_char_isalpha(ls->c) || ls->c == '_') {
+	GCstr *s;
+	do {
+	  lex_savenext(ls);
+	} while (lj_char_isident(ls->c));
+	s = lj_parse_keepstr(ls, ls->sb.b, sbuflen(&ls->sb));
+	setstrV(ls->L, tv, s);
+	return TK_sigil;
+      }
+      return '@';
     case '&':
       lex_next(ls);
       if (ls->c != '&') return '&'; else { lex_next(ls); return TK_and_; }
@@ -524,7 +536,8 @@ void lj_lex_error(LexState *ls, LexToken tok, ErrMsg em, ...)
   va_list argp;
   if (tok == 0) {
     tokstr = NULL;
-  } else if (tok == TK_name || tok == TK_string || tok == TK_number) {
+  } else if (tok == TK_name || tok == TK_sigil || tok == TK_string ||
+	     tok == TK_number) {
     lex_save(ls, '\0');
     tokstr = ls->sb.b;
   } else {
@@ -545,4 +558,3 @@ void lj_lex_init(lua_State *L)
     s->reserved = (uint8_t)(i+1);
   }
 }
-

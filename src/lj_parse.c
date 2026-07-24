@@ -160,6 +160,8 @@ typedef struct FuncState {
   uint8_t numparams;		/* Number of parameters. */
   uint8_t framesize;		/* Fixed frame size. */
   uint8_t nuv;			/* Number of upvalues */
+  uint8_t tryreturn;		/* Return statements use the try relay protocol. */
+  uint8_t tryblock;		/* This function is the body of a try statement. */
   VarIndex varmap[LJ_MAX_LOCVAR];  /* Map from register to variable idx. */
   VarIndex uvmap[LJ_MAX_UPVAL];	/* Map from upvalue to variable idx. */
   VarIndex uvtmp[LJ_MAX_UPVAL];	/* Temporary upvalue map. */
@@ -1762,6 +1764,8 @@ static void fs_init(LexState *ls, FuncState *fs)
   fs->nkn = 0;
   fs->nactvar = 0;
   fs->nuv = 0;
+  fs->tryreturn = 0;
+  fs->tryblock = 0;
   fs->bl = NULL;
   fs->flags = 0;
   fs->framesize = 1;  /* Minimum frame size. */
@@ -1978,9 +1982,11 @@ typedef struct ParamPatterns {
   BCReg nitems;
   BCReg nnames;
   BCReg npins;
+  GCstr *varargname;
 } ParamPatterns;
 
 static int parse_isbin(LexState *ls);
+static void parse_bin_prefix(LexState *ls);
 static void parse_table_pattern(LexState *ls, SBuf *fmt,
 				PatternBindings *binds);
 static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds);
@@ -2005,21 +2011,26 @@ static BCReg parse_params(LexState *ls, int needself,
 	PatternBindings binds;
 	SBuf *fmt = lj_buf_tmp_(ls->L);
 	GCstr *format;
+	MSize paramvidx;
 	BCReg item = patterns->nitems;
 	checklimit(fs, item, LJ_MAX_LOCVAR, "pattern parameters");
 	patterns->param[item] = nparams;
-	var_new_lit(ls, nparams++, "(pattern parameter)");
+	paramvidx = var_new_lit(ls, nparams++, "(pattern parameter)");
 	binds.vars = NULL;
 	binds.names = patterns->names + patterns->nnames;
 	binds.pins = NULL;
 	binds.pinnames = patterns->pinnames + patterns->npins;
 	binds.nvars = binds.npins = 0;
 	if (isbin) {
-	  lj_lex_next(ls);
+	  parse_bin_prefix(ls);
 	  format = parse_bin_pattern(ls, &binds);
 	} else {
 	  parse_table_pattern(ls, fmt, &binds);
 	  format = lj_parse_keepstr(ls, fmt->b, sbuflen(fmt));
+	}
+	if (lex_opt(ls, '=')) {
+	  GCstr *alias = lex_str(ls);
+	  setgcref(ls->vstack[paramvidx].name, obj2gco(alias));
 	}
 	setboolV(lj_tab_setstr(ls->L, fs->kt, format), 1);
 	patterns->format[item] = format;
@@ -2038,6 +2049,8 @@ static BCReg parse_params(LexState *ls, int needself,
       } else if (ls->tok == TK_dots) {
 	lj_lex_next(ls);
 	fs->flags |= PROTO_VARARG;
+	if (lex_isname(ls->tok))
+	  patterns->varargname = lex_str(ls);
 	break;
       } else {
 	err_syntax(ls, LJ_ERR_XPARAM);
@@ -2051,9 +2064,37 @@ static BCReg parse_params(LexState *ls, int needself,
   return nparams;
 }
 
+/* Build the local table for a named vararg parameter: ...name.
+**
+** This lowers to __vararg_pack(...), using the existing VARG and CALLM
+** bytecodes. The resulting table is added as an ordinary local, after the
+** true fixed parameters, so it never affects the function's arity. */
+static void emit_param_vararg_pack(LexState *ls, GCstr *name)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc fn;
+  BCReg base, vargbase;
+
+  if (name == NULL) return;
+  var_new(ls, 0, name);
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = lj_parse_keepstr(ls, "__vararg_pack",
+			      sizeof("__vararg_pack")-1);
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+  vargbase = fs->freereg;
+  bcreg_reserve(fs, 1);
+  bcemit_ABC(fs, BC_VARG, vargbase, 0, fs->numparams);
+  bcemit_ABC(fs, BC_CALLM, base, 2, vargbase-base-1-ls->fr2);
+  fs->freereg = base+1;
+  var_add(ls, 1);
+}
+
 /* Forward declarations. */
 static void parse_chunk(LexState *ls);
 static void parse_return(LexState *ls, int eflags);
+static int parse_iscatch(LexState *ls);
 
 /* Begin a new function prototype. */
 static void proto_begin(FuncState *fs, BCLine line, BCReg nparams)
@@ -2096,6 +2137,7 @@ static void parse_body(LexState *ls, ExpDesc *e, int needself, BCLine line)
   fscope_begin(&fs, &bl, 0);
   memset(&patterns, 0, sizeof(patterns));
   proto_begin(&fs, line, parse_params(ls, needself, '(', ')', &patterns));
+  emit_param_vararg_pack(ls, patterns.varargname);
   parse_param_patterns(ls, &patterns);
   parse_chunk(ls);
   if (ls->tok != TK_end) lex_match(ls, TK_end, TK_function, line);
@@ -2125,6 +2167,7 @@ static void parse_shortfunc(LexState *ls, ExpDesc *e, GCstr *name,
   }
   lex_check(ls, TK_arrow);
   proto_begin(&fs, line, nparams);
+  emit_param_vararg_pack(ls, patterns.varargname);
   parse_param_patterns(ls, &patterns);
   if (lex_opt(ls, TK_do)) {
     parse_chunk(ls);
@@ -2148,6 +2191,32 @@ static BCReg expr_list(LexState *ls, ExpDesc *v)
   return n;
 }
 
+/* A named vararg spread is only meaningful as the final call argument.
+** It lowers to __vararg_unpack(name), whose multiple results are passed on
+** by the surrounding CALLM instruction. */
+static int parse_named_vararg_spread(LexState *ls, ExpDesc *v)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc fn, packed;
+  BCReg base;
+
+  if (ls->tok != TK_dots || !lex_isname(lj_lex_lookahead(ls))) return 0;
+  lj_lex_next(ls);  /* Skip dots and advance to the packed table name. */
+  var_lookup(ls, &packed, lex_str(ls));
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = lj_parse_keepstr(ls, "__vararg_unpack",
+			      sizeof("__vararg_unpack")-1);
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+  expr_tonextreg(fs, &packed);
+  bcemit_ABC(fs, BC_CALL, base, 2, fs->freereg-base-ls->fr2);
+  expr_init(v, VCALL, fs->pc-1);
+  v->u.s.aux = base;
+  fs->freereg = base+1;
+  return 1;
+}
+
 /* Parse function argument list. */
 static void parse_args(LexState *ls, ExpDesc *e)
 {
@@ -2165,7 +2234,15 @@ static void parse_args(LexState *ls, ExpDesc *e)
     if (ls->tok == ')') {  /* f(). */
       args.k = VVOID;
     } else {
-      expr_list(ls, &args);
+      for (;;) {
+	if (parse_named_vararg_spread(ls, &args)) {
+	  if (lex_opt(ls, ',')) err_syntax(ls, LJ_ERR_XSYNTAX);
+	  break;
+	}
+	expr(ls, &args, 0);
+	if (!lex_opt(ls, ',')) break;
+	expr_tonextreg(fs, &args);
+      }
       if (args.k == VCALL)  /* f(a, b, g()) or f(a, b, ...). */
 	setbc_b(bcptr(fs, &args), 0);  /* Pass on multiple results. */
     }
@@ -2681,19 +2758,28 @@ static int pattern_is_wildcard(GCstr *name)
   return pattern_name_is(name, "_");
 }
 
-static int parse_isbin(LexState *ls)
+static int parse_isbin_sigil(LexState *ls)
 {
-  return lex_isname(ls->tok) &&
-	 pattern_name_is(strV(&ls->tokval), "bin") &&
-	 lj_lex_lookahead(ls) == '{';
+  return ls->tok == TK_sigil && pattern_name_is(strV(&ls->tokval), "b");
 }
 
-/* bin!{...} is construction. Keep bin{...} available as Lua call sugar. */
+/* @b{...} is the only binary language sigil. */
+static int parse_isbin(LexState *ls)
+{
+  return parse_isbin_sigil(ls) && lj_lex_lookahead(ls) == '{';
+}
+
+/* @b{...} is binary construction in expression position. */
 static int parse_isbin_constructor(LexState *ls)
 {
-  return lex_isname(ls->tok) &&
-	 pattern_name_is(strV(&ls->tokval), "bin") &&
-	 lj_lex_lookahead(ls) == '!';
+  return parse_isbin_sigil(ls);
+}
+
+static void parse_bin_prefix(LexState *ls)
+{
+  lj_assertLS(parse_isbin_sigil(ls),
+	      "expected binary pattern or construction prefix");
+  lj_lex_next(ls);
 }
 
 static void pattern_bind(LexState *ls, PatternBindings *binds, GCstr *name)
@@ -2711,13 +2797,15 @@ static void pattern_bind(LexState *ls, PatternBindings *binds, GCstr *name)
   binds->nvars = n+1;
 }
 
-static uint32_t pattern_pin(LexState *ls, PatternBindings *binds)
+static uint32_t pattern_pin(LexState *ls, PatternBindings *binds,
+			    GCstr **pname)
 {
   BCReg n = binds->npins;
   GCstr *name;
   checklimit(ls->fs, n, LJ_MAX_LOCVAR, "pattern pins");
   lex_check(ls, '^');
   name = lex_str(ls);
+  if (pname) *pname = name;
   if (binds->pins)
     var_lookup(ls, &binds->pins[n], name);
   else if (binds->pinnames)
@@ -3249,6 +3337,55 @@ static void parse_case_literal(LexState *ls, ExpDesc *e)
   }
 }
 
+static int parse_isscalar_pattern(LexState *ls)
+{
+  switch (ls->tok) {
+  case '^':
+  case TK_nil:
+  case TK_false:
+  case TK_true:
+  case TK_string:
+  case TK_number:
+  case '-':
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+/*
+** Lower a scalar or pinned assignment pattern to an internal raw-equality
+** assertion. The expected value is placed before parsing the RHS, so a pin
+** reads the value visible at the start of the match.
+*/
+static void parse_scalar_pattern_assignment(LexState *ls)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc expected, actual, fn;
+  GCstr *matcher;
+  BCReg base;
+
+  if (ls->tok == '^') {
+    lex_check(ls, '^');
+    var_lookup(ls, &expected, lex_str(ls));
+  } else {
+    parse_case_literal(ls, &expected);
+  }
+
+  matcher = lj_parse_keepstr(ls, "__value_match", sizeof("__value_match")-1);
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = matcher;
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+  expr_tonextreg(fs, &expected);
+  lex_check(ls, '=');
+  expr(ls, &actual, 0);
+  expr_tonextreg(fs, &actual);
+  bcemit_ABC(fs, BC_CALL, base, 1, fs->freereg-base-ls->fr2);
+  fs->freereg = fs->nactvar;
+}
+
 /* Recursively encode a table pattern and collect its result bindings. */
 static void parse_table_pattern(LexState *ls, SBuf *fmt,
 				PatternBindings *binds)
@@ -3272,20 +3409,31 @@ static void parse_table_pattern(LexState *ls, SBuf *fmt,
       GCstr *binder;
       int required;
       lj_lex_next(ls);
-      binder = lex_str(ls);
-      required = lex_opt(ls, '!');
-      table_scope_add_key(ls, &scope, binder);
-      if (pattern_is_wildcard(binder))
-	tablefmt_put_skip_key(fmt, binder, required);
+      if (ls->tok == '^') {
+	uint32_t pin;
+	pin = pattern_pin(ls, binds, NULL);
+	required = lex_opt(ls, '!');
+	table_scope_add_position(ls, &scope, array_index);
+	tablefmt_put_pin_pos(fmt, array_index++, required, pin);
+      }
       else {
-	tablefmt_put_bind_key(fmt, binder, required);
-	pattern_bind(ls, binds, binder);
+	binder = lex_str(ls);
+	required = lex_opt(ls, '!');
+	table_scope_add_position(ls, &scope, array_index);
+	if (pattern_is_wildcard(binder))
+	  tablefmt_put_skip_pos(fmt, array_index, required);
+	else {
+	  tablefmt_put_bind_pos(fmt, array_index, required);
+	  pattern_bind(ls, binds, binder);
+	}
+	array_index++;
       }
     } else if (ls->tok == '^') {
-      uint32_t pin = pattern_pin(ls, binds);
+      GCstr *name;
+      uint32_t pin = pattern_pin(ls, binds, &name);
       int required = lex_opt(ls, '!');
-      table_scope_add_position(ls, &scope, array_index);
-      tablefmt_put_pin_pos(fmt, array_index++, required, pin);
+      table_scope_add_key(ls, &scope, name);
+      tablefmt_put_pin_key(fmt, name, required, pin);
     } else if (parse_table_pos_literal(ls, fmt, array_index)) {
       table_scope_add_position(ls, &scope, array_index);
       array_index++;
@@ -3304,7 +3452,7 @@ static void parse_table_pattern(LexState *ls, SBuf *fmt,
 	  required = lex_opt(ls, '!');
 	  fmt->b[required_offset] = (char)required;
 	} else if (ls->tok == '^') {
-	  uint32_t pin = pattern_pin(ls, binds);
+	  uint32_t pin = pattern_pin(ls, binds, NULL);
 	  int required = lex_opt(ls, '!');
 	  tablefmt_put_pin_key(fmt, name, required, pin);
 	} else if (!parse_table_literal(ls, fmt, name)) {
@@ -3319,14 +3467,13 @@ static void parse_table_pattern(LexState *ls, SBuf *fmt,
 	}
       } else {
 	int required = lex_opt(ls, '!');
-	table_scope_add_position(ls, &scope, array_index);
+	table_scope_add_key(ls, &scope, name);
 	if (pattern_is_wildcard(name)) {
-	  if (required) tablefmt_put_skip_pos(fmt, array_index, required);
+	  if (required) tablefmt_put_skip_key(fmt, name, required);
 	} else {
-	  tablefmt_put_bind_pos(fmt, array_index, required);
+	  tablefmt_put_bind_key(fmt, name, required);
 	  pattern_bind(ls, binds, name);
 	}
-	array_index++;
       }
     }
     if (!lex_opt(ls, ',') && !lex_opt(ls, ';')) break;
@@ -3441,7 +3588,7 @@ static void parse_local_pattern(LexState *ls)
   var_add(ls, binds.nvars);
 }
 
-/* Parse bin{...} after its contextual 'bin' name and retain its descriptor. */
+/* Parse the body of an @b{...} binary pattern and retain its descriptor. */
 static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds)
 {
   SBuf *fmt = lj_buf_tmp_(ls->L);
@@ -3462,7 +3609,7 @@ static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds)
       lex_check(ls, '>');
       if (is_rest && ls->tok != '}') err_syntax(ls, LJ_ERR_XSYNTAX);
     } else if (ls->tok == '^') {
-      uint32_t pin = pattern_pin(ls, binds);
+      uint32_t pin = pattern_pin(ls, binds, NULL);
       int is_rest;
       if (ls->tok == '<') {
 	lex_check(ls, '<');
@@ -3491,7 +3638,7 @@ static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds)
   return lj_parse_keepstr(ls, fmt->b, sbuflen(fmt));
 }
 
-/* Parse bin!{literal, value <decoder>, ...} as a binary construction. */
+/* Parse @b{literal, value <decoder>, ...} as a binary construction. */
 static void parse_bin_constructor(LexState *ls, ExpDesc *e)
 {
   FuncState *fs = ls->fs;
@@ -3503,8 +3650,7 @@ static void parse_bin_constructor(LexState *ls, ExpDesc *e)
   BCReg formatreg;
   BCIns ins;
 
-  lj_lex_next(ls);  /* Skip contextual 'bin'. */
-  lex_check(ls, '!');
+  parse_bin_prefix(ls);  /* Skip @b. */
   builder = lj_parse_keepstr(ls, "__bin_build", sizeof("__bin_build")-1);
   expr_init(&fn, VGLOBAL, 0);
   fn.u.sval = builder;
@@ -3525,7 +3671,9 @@ static void parse_bin_constructor(LexState *ls, ExpDesc *e)
     } else {
       int is_rest;
       checklimit(fs, nvalues, LJ_MAX_LOCVAR, "binary construction fields");
-      expr_simple(ls, &value, 0);
+      /* Keep the following '<decoder>' out of the expression while allowing
+      ** a signed numeric literal, e.g. @b{-128 <s16>}. */
+      expr_unop(ls, &value, 0);
       expr_tonextreg(fs, &value);
       nvalues++;
       lex_check(ls, '<');
@@ -3552,7 +3700,7 @@ static void parse_local_bin(LexState *ls)
   PatternBindings binds = { NULL, NULL, pins, NULL, 0, 0 };
   GCstr *format;
 
-  lj_lex_next(ls);  /* Skip the contextual 'bin' name. */
+  parse_bin_prefix(ls);
   format = parse_bin_pattern(ls, &binds);
   lex_check(ls, '=');
   emit_pattern_match_call(ls, "__bin_match", format, &binds);
@@ -3569,7 +3717,7 @@ static void parse_pattern_assignment(LexState *ls, int isbin)
   BCReg base, i;
 
   if (isbin) {
-    lj_lex_next(ls);  /* Skip contextual 'bin'. */
+    parse_bin_prefix(ls);
     format = parse_bin_pattern(ls, &binds);
   } else {
     SBuf *fmt = lj_buf_tmp_(ls->L);
@@ -3703,12 +3851,62 @@ static int parse_isend(LexToken tok)
   }
 }
 
+/* Return from a protected try body via a fixed protocol understood by the
+** enclosing function.  The table preserves multiple results and nil holes. */
+static void parse_try_return(LexState *ls, int eflags)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc fn, args;
+  BCReg base;
+  BCIns ins;
+
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = lj_parse_keepstr(ls, "__try_return", sizeof("__try_return")-1);
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+
+  if (!(eflags & EXPR_F_RET1) &&
+      (parse_isend(ls->tok) || parse_iscatch(ls) || ls->tok == ';')) {
+    args.k = VVOID;
+  } else if (eflags & EXPR_F_RET1) {
+    expr(ls, &args, eflags);
+  } else {
+    for (;;) {
+      if (parse_named_vararg_spread(ls, &args)) {
+	if (lex_opt(ls, ',')) err_syntax(ls, LJ_ERR_XSYNTAX);
+	break;
+      }
+      expr(ls, &args, 0);
+      if (!lex_opt(ls, ',')) break;
+      expr_tonextreg(fs, &args);
+    }
+  }
+
+  if (args.k == VCALL) {
+    setbc_b(bcptr(fs, &args), 0);  /* Preserve a final multi-result call. */
+    ins = BCINS_ABC(BC_CALLM, base, 3, args.u.s.aux-base-1-ls->fr2);
+  } else {
+    if (args.k != VVOID) expr_tonextreg(fs, &args);
+    ins = BCINS_ABC(BC_CALL, base, 3, fs->freereg-base-ls->fr2);
+  }
+  bcemit_INS(fs, ins);  /* __try_return(...) => tag, packed results. */
+  fs->freereg = base+2;
+  if (fs->flags & PROTO_CHILD)
+    bcemit_AJ(fs, BC_UCLO, 0, 0);
+  bcemit_AD(fs, BC_RET, fs->nactvar, 3);
+}
+
 /* Parse 'return' statement. */
 static void parse_return(LexState *ls, int eflags)
 {
   BCIns ins;
   FuncState *fs = ls->fs;
   fs->flags |= PROTO_HAS_RETURN;
+  if (fs->tryreturn) {
+    parse_try_return(ls, eflags);
+    return;
+  }
   if (!(eflags & EXPR_F_RET1) && (parse_isend(ls->tok) || ls->tok == ';')) {
     ins = BCINS_AD(BC_RET0, 0, 1);  /* Bare return. */
   } else {  /* Return with one or more values. */
@@ -3755,6 +3953,12 @@ static void parse_return(LexState *ls, int eflags)
 /* Parse 'break' statement. */
 static void parse_break(LexState *ls)
 {
+  FuncScope *bl;
+  if (ls->fs->tryblock) {
+    for (bl = ls->fs->bl; bl; bl = bl->prev)
+      if (bl->flags & FSCOPE_LOOP) break;
+    if (bl == NULL) lj_lex_error(ls, 0, LJ_ERR_XTRYBREAK);
+  }
   ls->fs->bl->flags |= FSCOPE_BREAK;
   gola_new(ls, NAME_BREAK, VSTACK_GOTO, bcemit_jmp(ls->fs));
 }
@@ -3762,6 +3966,12 @@ static void parse_break(LexState *ls)
 /* Parse 'continue' statement. */
 static void parse_continue(LexState *ls)
 {
+  FuncScope *bl;
+  if (ls->fs->tryblock) {
+    for (bl = ls->fs->bl; bl; bl = bl->prev)
+      if (bl->flags & FSCOPE_LOOP) break;
+    if (bl == NULL) lj_lex_error(ls, 0, LJ_ERR_XTRYCONT);
+  }
   ls->fs->bl->flags |= FSCOPE_CONT;
   gola_new(ls, NAME_CONT, VSTACK_GOTO, bcemit_jmp(ls->fs));
 }
@@ -4083,6 +4293,26 @@ static BCPos emit_case_pin_test(LexState *ls, BCReg subject)
   return value.f;
 }
 
+/* Emit the strict failure path for a case with no matching clause. */
+static void emit_case_clause_error(LexState *ls, BCReg subject)
+{
+  FuncState *fs = ls->fs;
+  GCstr *matcher;
+  ExpDesc fn, value;
+  BCReg base;
+
+  matcher = lj_parse_keepstr(ls, "__case_clause", sizeof("__case_clause")-1);
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = matcher;
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+  expr_init(&value, VNONRELOC, subject);
+  expr_tonextreg(fs, &value);
+  bcemit_ABC(fs, BC_CALL, base, 1, fs->freereg-base-ls->fr2);
+  fs->freereg = fs->nactvar;
+}
+
 /* Emit a non-throwing matcher and copy its captures into branch locals. */
 static BCPos emit_case_match_test(LexState *ls, BCReg subject,
 			  const char *matcher_name, GCstr *format,
@@ -4167,7 +4397,7 @@ static BCPos parse_case_when(LexState *ls, BCReg subject)
     ExpDesc pins[LJ_MAX_LOCVAR];
     PatternBindings binds = { NULL, NULL, pins, NULL, 0, 0 };
     GCstr *format;
-    lj_lex_next(ls);  /* Skip contextual 'bin'. */
+    parse_bin_prefix(ls);
     format = parse_bin_pattern(ls, &binds);
     fail = emit_case_match_test(ls, subject, "__try_bin_match", format, &binds);
   } else {
@@ -4214,7 +4444,8 @@ static void parse_case(LexState *ls, BCLine line)
     parse_chunk(ls);
     fscope_end(fs);
   } else {
-    jmp_append(fs, &escapelist, fail);
+    jmp_tohere(fs, fail);
+    emit_case_clause_error(ls, subjectreg);
   }
   lex_match(ls, TK_end, TK_do, line);
   fscope_end(fs);
@@ -4248,7 +4479,7 @@ static BCPos parse_case_when_expr(LexState *ls, BCReg subject, BCReg result)
     ExpDesc pins[LJ_MAX_LOCVAR];
     PatternBindings binds = { NULL, NULL, pins, NULL, 0, 0 };
     GCstr *format;
-    lj_lex_next(ls);
+    parse_bin_prefix(ls);
     format = parse_bin_pattern(ls, &binds);
     fail = emit_case_match_test(ls, subject, "__try_bin_match", format, &binds);
   } else {
@@ -4308,7 +4539,7 @@ static void parse_case_expr_to_reg(LexState *ls, ExpDesc *e, BCReg resultreg)
     fscope_end(fs);
   } else {
     jmp_tohere(fs, fail);
-    bcemit_AD(fs, BC_KPRI, resultreg, VKNIL);
+    emit_case_clause_error(ls, subjectreg);
   }
   lex_match(ls, TK_end, TK_do, line);
   fscope_end(fs);
@@ -4319,6 +4550,216 @@ static void parse_case_expr_to_reg(LexState *ls, ExpDesc *e, BCReg resultreg)
 static void parse_case_expr(LexState *ls, ExpDesc *e)
 {
   parse_case_expr_to_reg(ls, e, NO_REG);
+}
+
+/* `try` remains a soft keyword: only `try do` starts the statement. */
+static int parse_istry(LexState *ls)
+{
+  return lex_isname(ls->tok) && pattern_name_is(strV(&ls->tokval), "try") &&
+	 lj_lex_lookahead(ls) == TK_do;
+}
+
+/* A catch starts only in the hidden protected function.  Keeping it
+** contextual leaves ordinary variables and calls named catch usable there. */
+static int parse_iscatch_token(LexState *ls)
+{
+  LexToken next;
+  if (!lex_isname(ls->tok) || !pattern_name_is(strV(&ls->tokval), "catch"))
+    return 0;
+  next = ls->lookahead == TK_eof ? lj_lex_lookahead(ls) : ls->lookahead;
+  return next != '=' && next != '.' && next != '[' && next != ':' &&
+	 next != TK_nav && next != '(';
+}
+
+static int parse_iscatch(LexState *ls)
+{
+  return ls->fs->tryblock && parse_iscatch_token(ls);
+}
+
+/* Compile `try do ...` as an ordinary zero-argument closure, but make its
+** return statements use a relay understood by the enclosing function. */
+static void parse_try_body(LexState *ls, ExpDesc *e, BCLine line)
+{
+  ptrdiff_t oldbase = ls->fs->bcbase - ls->bcstack;
+  FuncState fs;
+  FuncScope bl;
+
+  fs_init(ls, &fs);
+  fs.tryreturn = 1;
+  fs.tryblock = 1;
+  fscope_begin(&fs, &bl, 0);
+  proto_begin(&fs, line, 0);
+  parse_chunk(ls);
+  if (!parse_iscatch(ls)) err_syntax(ls, LJ_ERR_XSYNTAX);
+  proto_finish(ls, e, oldbase);
+}
+
+/* Call pcall with exactly three result slots: ok, value/tag, payload. */
+static BCReg emit_try_pcall(LexState *ls, ExpDesc *protected)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc fn;
+  BCReg base;
+
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = lj_parse_keepstr(ls, "pcall", sizeof("pcall")-1);
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+  expr_tonextreg(fs, protected);
+  bcemit_ABC(fs, BC_CALL, base, 4, fs->freereg-base-ls->fr2);
+  fs->freereg = base+3;
+  return base;
+}
+
+/* Return the jump list for a successful pcall that did not relay return. */
+static BCPos emit_try_return_test(LexState *ls, BCReg subject)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc value, tag;
+
+  expr_init(&value, VNONRELOC, subject);
+  expr_init(&tag, VKSTR, 0);
+  tag.u.sval = lj_parse_keepstr(ls, "\001lj_try_return",
+				 sizeof("\001lj_try_return")-1);
+  bcemit_binop_left(fs, OPR_EQ, &value);
+  bcemit_binop(fs, OPR_EQ, &value, &tag);
+  bcemit_branch_t(fs, &value);
+  return value.f;
+}
+
+/* Unpack a relayed return and leave this enclosing function for real. */
+static void emit_try_return_relay(LexState *ls, BCReg packed)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc fn, value;
+  BCReg base;
+
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = lj_parse_keepstr(ls, "__vararg_unpack",
+				 sizeof("__vararg_unpack")-1);
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+  expr_init(&value, VNONRELOC, packed);
+  expr_tonextreg(fs, &value);
+  bcemit_ABC(fs, BC_CALL, base, 0, fs->freereg-base-ls->fr2);
+  if (fs->flags & PROTO_CHILD)
+    bcemit_AJ(fs, BC_UCLO, 0, 0);
+  bcemit_AD(fs, BC_RETM, fs->nactvar, base-fs->nactvar);
+  fs->freereg = fs->nactvar;
+}
+
+/* Re-throw the original protected error without adding another stack level. */
+static void emit_try_rethrow(LexState *ls, BCReg subject)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc fn, value, level;
+  BCReg base;
+
+  expr_init(&fn, VGLOBAL, 0);
+  fn.u.sval = lj_parse_keepstr(ls, "error", sizeof("error")-1);
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
+  expr_init(&value, VNONRELOC, subject);
+  expr_tonextreg(fs, &value);
+  expr_init(&level, VKNUM, 0);
+  setintV(&level.u.nval, 0);
+  expr_tonextreg(fs, &level);
+  bcemit_ABC(fs, BC_CALL, base, 1, fs->freereg-base-ls->fr2);
+  fs->freereg = fs->nactvar;
+}
+
+/* Parse the one v1 catch clause.  It accepts the normal scalar, table and
+** binary patterns, plus a bare name which binds the error object. */
+static BCPos parse_try_catch(LexState *ls, BCReg subject)
+{
+  FuncState *fs = ls->fs;
+  FuncScope bl;
+  BCPos fail;
+
+  fscope_begin(fs, &bl, 0);
+  lj_lex_next(ls);  /* Skip contextual 'catch'. */
+  if (ls->tok == TK_then ||
+      (lex_isname(ls->tok) && pattern_is_wildcard(strV(&ls->tokval)))) {
+    if (ls->tok != TK_then) lj_lex_next(ls);
+    fail = NO_JMP;
+  } else if (lex_isname(ls->tok)) {
+    ExpDesc value;
+    GCstr *name = strV(&ls->tokval);
+    /* The name may have been read ahead while the protected child was the
+    ** active function, so anchor it in this parent prototype as well. */
+    setboolV(lj_tab_setstr(ls->L, fs->kt, name), 1);
+    lj_lex_next(ls);
+    var_new(ls, 0, name);
+    bcreg_reserve(fs, 1);
+    expr_init(&value, VNONRELOC, subject);
+    expr_toreg(fs, &value, fs->nactvar);
+    var_add(ls, 1);
+    fs->freereg = fs->nactvar;
+    fail = NO_JMP;
+  } else if (ls->tok == '^') {
+    fail = emit_case_pin_test(ls, subject);
+  } else if (ls->tok == '{') {
+    SBuf *fmt = lj_buf_tmp_(ls->L);
+    ExpDesc pins[LJ_MAX_LOCVAR];
+    PatternBindings binds = { NULL, NULL, pins, NULL, 0, 0 };
+    GCstr *format;
+    parse_table_pattern(ls, fmt, &binds);
+    format = lj_parse_keepstr(ls, fmt->b, sbuflen(fmt));
+    fail = emit_case_match_test(ls, subject, "__try_table_match", format, &binds);
+  } else if (parse_isbin(ls)) {
+    ExpDesc pins[LJ_MAX_LOCVAR];
+    PatternBindings binds = { NULL, NULL, pins, NULL, 0, 0 };
+    GCstr *format;
+    parse_bin_prefix(ls);
+    format = parse_bin_pattern(ls, &binds);
+    fail = emit_case_match_test(ls, subject, "__try_bin_match", format, &binds);
+  } else {
+    fail = emit_case_literal_test(ls, subject);
+  }
+  lex_check(ls, TK_then);
+  parse_chunk(ls);
+  fscope_end(fs);
+  return fail;
+}
+
+/* Parse `try do ... catch pattern then ... end`.  No new VM opcodes are
+** involved: calls, branches and returns are all existing bytecode. */
+static void parse_try(LexState *ls, BCLine line)
+{
+  FuncState *fs = ls->fs;
+  FuncScope bl;
+  ExpDesc protected, ok;
+  BCReg base;
+  BCPos errorpath, complete = NO_JMP, catchmiss;
+
+  lj_lex_next(ls);  /* Skip contextual 'try'. */
+  lex_check(ls, TK_do);
+  fscope_begin(fs, &bl, 0);
+  /* Keep pcall's three fixed results live across catch pattern matching. */
+  var_new_lit(ls, 0, "(try ok)");
+  var_new_lit(ls, 1, "(try result)");
+  var_new_lit(ls, 2, "(try payload)");
+  parse_try_body(ls, &protected, line);
+  base = emit_try_pcall(ls, &protected);
+  var_add(ls, 3);
+
+  expr_init(&ok, VNONRELOC, base);
+  bcemit_branch_t(fs, &ok);
+  errorpath = ok.f;
+  jmp_append(fs, &complete, emit_try_return_test(ls, base+1));
+  emit_try_return_relay(ls, base+2);
+
+  jmp_tohere(fs, errorpath);
+  catchmiss = parse_try_catch(ls, base+1);
+  jmp_append(fs, &complete, bcemit_jmp(fs));
+  jmp_tohere(fs, catchmiss);
+  emit_try_rethrow(ls, base+1);
+  lex_match(ls, TK_end, TK_do, line);
+  jmp_tohere(fs, complete);
+  fscope_end(fs);
 }
 
 /* `case` is contextual in statement position; keep field/assignment uses intact. */
@@ -4338,6 +4779,10 @@ static int parse_iscase(LexState *ls)
 static int parse_stmt(LexState *ls)
 {
   BCLine line = ls->linenumber;
+  if (parse_isscalar_pattern(ls)) {
+    parse_scalar_pattern_assignment(ls);
+    return 0;
+  }
   if (ls->tok == '{') {
     parse_pattern_assignment(ls, 0);
     return 0;
@@ -4348,6 +4793,10 @@ static int parse_stmt(LexState *ls)
   }
   if (parse_iscase(ls)) {
     parse_case(ls, line);
+    return 0;
+  }
+  if (parse_istry(ls)) {
+    parse_try(ls, line);
     return 0;
   }
   switch (ls->tok) {
@@ -4390,7 +4839,15 @@ static int parse_stmt(LexState *ls)
     parse_break(ls);
     return !LJ_52;  /* Must be last in Lua 5.1. */
   case TK_continue:
-    if (!parse_isend(lj_lex_lookahead(ls))) goto assign;  /* Soft keyword. */
+    {
+      LexToken next = lj_lex_lookahead(ls);
+      /* A protected body's contextual catch also terminates continue, so an
+      ** attempted jump to an outer loop receives the dedicated diagnostic. */
+      if (!parse_isend(next) &&
+	  !(ls->fs->tryblock && lex_isname(next) &&
+	    pattern_name_is(strV(&ls->lookaheadval), "catch")))
+	goto assign;  /* Soft keyword. */
+    }
     lj_lex_next(ls);
     parse_continue(ls);
     return 1;  /* Must be last. */
@@ -4422,7 +4879,8 @@ static void parse_chunk(LexState *ls)
 {
   int islast = 0;
   synlevel_begin(ls);
-  while (!islast && !parse_isend(ls->tok) && !parse_iswhen(ls)) {
+  while (!islast && !parse_isend(ls->tok) && !parse_iswhen(ls) &&
+	 !parse_iscatch(ls)) {
     islast = parse_stmt(ls);
     lex_opt(ls, ';');
     lj_assertLS(ls->fs->framesize >= ls->fs->freereg &&
