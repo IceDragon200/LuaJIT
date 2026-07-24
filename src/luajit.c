@@ -232,29 +232,65 @@ static int pushline(lua_State *L, int firstline)
     size_t len = strlen(buf);
     if (len > 0 && buf[len-1] == '\n')
       buf[len-1] = '\0';
-    if (firstline && buf[0] == '=')
-      lua_pushfstring(L, "return %s", buf+1);
-    else
-      lua_pushstring(L, buf);
+    lua_pushstring(L, buf);
     return 1;
   }
   return 0;
 }
 
-static int loadline(lua_State *L)
+/*
+** Expression-first loading and multiline fallback are adapted from the
+** current Lua standalone frontend (lua.c), Copyright (C) 1994-2026 Lua.org,
+** PUC-Rio. A leading '=' remains a LuaJIT compatibility alias for an
+** expression.
+*/
+static int addreturn(lua_State *L)
+{
+  const char *line = lua_tostring(L, -1);
+  int status;
+
+  if (line[0] == '=') line++;  /* Traditional interactive shorthand. */
+  line = lua_pushfstring(L, "return %s;", line);
+  status = luaL_loadbuffer(L, line, strlen(line), "=stdin");
+  if (status == LUA_OK)
+    lua_remove(L, -2);  /* Remove the temporary return source. */
+  else
+    lua_pop(L, 2);  /* Drop its error and the temporary return source. */
+  return status;
+}
+
+/* Read continuation lines until a complete statement or a final error. */
+static int multiline(lua_State *L)
 {
   int status;
-  lua_settop(L, 0);
-  if (!pushline(L, 1))
-    return -1;  /* no input */
   for (;;) {  /* repeat until gets a complete line */
-    status = luaL_loadbuffer(L, lua_tostring(L, 1), lua_strlen(L, 1), "=stdin");
-    if (!incomplete(L, status)) break;  /* cannot try to add lines? */
+    status = luaL_loadbuffer(L, lua_tostring(L, 1), lua_strlen(L, 1),
+			     "=stdin");
+    if (!incomplete(L, status)) return status;
     if (!pushline(L, 0))  /* no more input? */
-      return -1;
+      return status;
     lua_pushliteral(L, "\n");  /* add a new line... */
     lua_insert(L, -2);  /* ...between the two lines */
     lua_concat(L, 3);  /* join them */
+  }
+}
+
+static int loadline(lua_State *L)
+{
+  int status, forceexpr;
+
+  lua_settop(L, 0);
+  if (!pushline(L, 1))
+    return -1;  /* no input */
+  forceexpr = lua_tostring(L, 1)[0] == '=';
+  status = addreturn(L);
+  if (status != LUA_OK) {
+    if (forceexpr) {
+      const char *line = lua_tostring(L, 1);
+      lua_pushfstring(L, "return %s", line + 1);
+      lua_replace(L, 1);
+    }
+    status = multiline(L);  /* Try a statement, with continuation lines. */
   }
   lua_remove(L, 1);  /* remove line */
   return status;
@@ -598,4 +634,3 @@ int main(int argc, char **argv)
   lua_close(L);
   return (status || smain.status > 0) ? EXIT_FAILURE : EXIT_SUCCESS;
 }
-

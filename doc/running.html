@@ -84,6 +84,29 @@ Lua statements or whole Lua applications from the command line. It has an
 interactive mode, too.
 </p>
 
+<h2 id="interactive">Interactive expressions</h2>
+<p>
+In interactive mode, a line is first tried as an expression. Its returned
+values are displayed with the global <tt>print</tt> function. If it is not an
+expression, LuaJIT falls back to compiling it as a normal Lua statement. This
+makes exploratory use pleasant without changing ordinary assignment,
+declaration, control-flow, or multi-line syntax.
+</p>
+<pre class="code">
+&gt; 1 + 2
+3
+&gt; math.sqrt(81)
+9
+&gt; answer = 42       -- assignment remains silent
+&gt; answer
+42
+</pre>
+<p>
+The traditional leading <tt>=</tt> expression shorthand remains accepted. As
+before, redefining the global <tt>print</tt> changes how displayed values are
+rendered.
+</p>
+
 <h2 id="options">Command Line Options</h2>
 <p>
 The <tt>luajit</tt> stand-alone executable is just a slightly modified
