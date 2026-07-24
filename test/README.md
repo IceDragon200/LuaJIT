@@ -11,16 +11,22 @@ Run the complete suite from the repository root:
 make test
 ```
 
-The Makefile discovers every `test/*_test.lua` file. Module tests are kept in
-one file per module, so an optional dependency can be tested or skipped without
-obscuring the rest of the suite. Run selected files or tests directly when
-iterating on a change:
+The Makefile discovers every `test/*_test.lua` file and every POSIX-shell
+`test/*_test.sh` integration test. Module tests are kept in one file per
+module, so an optional dependency can be tested or skipped without obscuring
+the rest of the suite. Run selected files or tests directly when iterating on a
+change:
 
 ```sh
 src/luajit test/run.lua test/patterns_test.lua
 src/luajit test/run.lua --filter binary --trace test/*_test.lua
 src/luajit test/run.lua --seed 42 test/*_test.lua
 ```
+
+`test/repl_test.sh` is a small POSIX-shell integration test, also run by
+`make test`. It drives `luajit -i` through standard input so that the frontend
+itself—not merely the compiler—keeps accepting bare expressions, normal
+statements, multiline input, multiple results, and LuaJIT's legacy `=` alias.
 
 `--filter` is a case-insensitive plain substring match against the full test
 name. `--list` lists the matching tests without executing them; `--fail-fast`

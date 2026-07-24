@@ -56,6 +56,36 @@ adapt the following source cases from the initial commit
 - `test/misc/table_misc.lua`
 - `test/misc/table_remove.lua`
 - `test/misc/select.lua`
+- `test/lang/andor.lua`
+- `test/lang/assignment.lua`
+- `test/lang/compare.lua`
+- `test/lang/compare_nan.lua`
+- `test/lang/concat.lua`
+- `test/lang/constant/number.lua`
+- `test/lang/constant/table.lua`
+- `test/lang/for.lua`
+- `test/lang/gc.lua`
+- `test/lang/length.lua`
+- `test/lang/modulo.lua`
+- `test/lang/self.lua`
+- `test/lang/table.lua`
+- `test/lang/upvalue/closure.lua`
+- `test/misc/dualnum.lua`
+- `test/misc/phi_conv.lua`
+- `test/lib/base/getfenv.lua`
+- `test/lib/base/assert.lua`
+- `test/lib/base/error.lua`
+- `test/lib/base/getsetmetatable.lua`
+- `test/lib/base/ipairs.lua`
+- `test/lib/base/next.lua`
+- `test/lib/base/tonumber_tostring.lua`
+- `test/lib/coroutine/yield.lua`
+- `test/lib/math/abs.lua`
+- `test/lib/math/constants.lua`
+- `test/lib/math/random.lua`
+- `test/lib/string/format/num.lua`
+- `test/lib/string/metatable.lua`
+- `test/lib/table/sort.lua`
 
 That commit is authored by Mike Pall. The repository's root README states that
 Lua/LuaJIT tests and benchmarks written by Mike Pall are placed in the public
@@ -66,6 +96,17 @@ The upstream workspace also contains work by other contributors. It is not
 copied into this fork unless its authorship and license are individually clear.
 When a test is independently re-authored from an upstream behavioural idea,
 the new test must say so in its header and name the original source path.
+
+### Deliberate scope boundary
+
+The default suite adopts the public-domain, self-contained core-language and
+standard-library cases that apply to this LuaJIT configuration. It deliberately
+leaves `test/lib/ffi/`, `test/sysdep/`, `test/unportable/`, C/C++ helper cases,
+debug-hook stress tests, and optimizer-code-generation probes for separately
+maintained, capability-gated suites. `test/lib/table/pack.lua` is also omitted:
+it requires Lua-5.2 compatibility (`table.pack`/`table.unpack`), which this
+stock LuaJIT-2.1 configuration does not expose. These are scope decisions, not
+claims about the license status of the remaining upstream files.
 
 ## Attribution practice for experimental features
 

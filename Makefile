@@ -128,11 +128,13 @@ default all $(INSTALL_DEP):
 	@echo "==== Successfully built LuaJIT $(MMVERSION) ===="
 
 TEST_FILES= $(sort $(wildcard test/*_test.lua))
+TEST_SCRIPTS= $(sort $(wildcard test/*_test.sh))
 
 test: all
 	@echo "==== Testing LuaJIT $(MMVERSION) ===="
 	@test -n "$(TEST_FILES)" || { echo "No test files found."; exit 1; }
 	./src/luajit test/run.lua $(TEST_FILES)
+	@for script in $(TEST_SCRIPTS); do sh $$script ./src/luajit; done
 
 install: $(INSTALL_DEP)
 	@echo "==== Installing LuaJIT $(VERSION) to $(PREFIX) ===="
