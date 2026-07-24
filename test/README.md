@@ -70,3 +70,27 @@ harness.
 syntax and bytecode guarantees. They intentionally compile extension examples
 with `loadstring`, which makes parser regressions show up as ordinary test
 failures and lets bytecode round trips exercise the same compiled forms.
+
+## Capability gates and provenance
+
+Suites and examples may accept an options table before their callback:
+
+```lua
+test.describe("JIT regressions", { requires = { jit = true } }, function()
+  test.it("uses the FFI when available", { requires = { ffi = true } }, function(t)
+    -- ...
+  end)
+end)
+```
+
+Known capabilities are `luajit` (optionally with a minimum numeric version),
+`jit`, `ffi`, and `bit`. Available capabilities are enabled by default; a
+missing requirement is reported as a skip rather than a failure. This keeps
+the original feature-gating intent of adopted LuaJIT tests while making the
+standard fork build run its JIT and FFI coverage out of the box.
+
+When tests are adapted from another project, add a source/provenance header and
+record the exact source path, commit, author, and license status in
+`test/THIRD_PARTY_NOTICES.md`. Do not import a test merely because its behavior
+is useful: unclear authorship or licensing means it must be excluded or
+independently re-authored with explicit attribution.

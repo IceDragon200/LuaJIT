@@ -1,6 +1,7 @@
 /*
 ** Byte-oriented binary library.
 ** Local experimental extension.
+** API direction informed by Erlang/OTP's binary module; independently written.
 */
 
 #define lib_binary_c
@@ -19,6 +20,14 @@
 /* ------------------------------------------------------------------------ */
 
 #define LJLIB_MODULE_binary
+
+/***
+Literal, byte-oriented operations on immutable Lua strings.
+All offsets and lengths exposed by this module are zero-based byte counts.
+@module binary
+@usage local binary = require("binary")
+@see doc/ext_binary.html
+*/
 
 #define BINARY_PATTERN_MT "binary.compiled_pattern"
 
@@ -233,6 +242,13 @@ static void binary_trim_result(lua_State *L, int table, int count,
 
 /* ------------------------------------------------------------------------ */
 
+/***
+Return the byte at a zero-based offset.
+@function binary.at
+@param data byte string to inspect
+@param offset zero-based byte offset
+@return byte integer from 0 through 255
+*/
 LJLIB_CF(binary_at)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -244,6 +260,12 @@ LJLIB_CF(binary_at)
   return 1;
 }
 
+/***
+Return the first byte of a non-empty string.
+@function binary.first
+@param data non-empty byte string
+@return byte integer from 0 through 255
+*/
 LJLIB_CF(binary_first)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -253,6 +275,12 @@ LJLIB_CF(binary_first)
   return 1;
 }
 
+/***
+Return the last byte of a non-empty string.
+@function binary.last
+@param data non-empty byte string
+@return byte integer from 0 through 255
+*/
 LJLIB_CF(binary_last)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -262,6 +290,14 @@ LJLIB_CF(binary_last)
   return 1;
 }
 
+/***
+Return a strict zero-based byte slice.
+@function binary.part
+@param data byte string to slice
+@param offset zero-based start offset
+@param[opt] length number of bytes; omitting it selects through the end
+@return string copied byte slice
+*/
 LJLIB_CF(binary_part)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -275,6 +311,12 @@ LJLIB_CF(binary_part)
   return 1;
 }
 
+/***
+Create an opaque, reusable literal search pattern.
+@function binary.compile_pattern
+@param patterns non-empty string or sequence of non-empty strings
+@return compiled pattern accepted by the search and replacement functions
+*/
 LJLIB_CF(binary_compile_pattern)
 {
   int type = lua_type(L, 1);
@@ -310,6 +352,16 @@ LJLIB_CF(binary_compile_pattern)
   return 1;
 }
 
+/***
+Find the first literal byte pattern in a string.
+When several patterns begin at the same offset, the first supplied pattern
+wins. The optional bounds use zero-based byte offsets.
+@function binary.match
+@param data byte string to search
+@param pattern non-empty string, pattern list, or compiled pattern
+@param[opt] options table with optional `start` and `length` byte bounds
+@return offset, length for the first match; no results when no match exists
+*/
 LJLIB_CF(binary_match)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -327,6 +379,14 @@ LJLIB_CF(binary_match)
   return 2;
 }
 
+/***
+Find all non-overlapping literal matches in a string.
+@function binary.matches
+@param data byte string to search
+@param pattern non-empty string, pattern list, or compiled pattern
+@param[opt] options table with optional `start` and `length` byte bounds
+@return array of `{ offset, length }` tables in match order
+*/
 LJLIB_CF(binary_matches)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -352,6 +412,17 @@ LJLIB_CF(binary_matches)
   return 1;
 }
 
+/***
+Split a byte string at literal matches.
+By default only the first match splits the string; `global = true` splits at
+every match. `trim` drops trailing empty fields and `trim_all` drops all of
+them.
+@function binary.split
+@param data byte string to split
+@param pattern non-empty string, pattern list, or compiled pattern
+@param[opt] options table with `global`, `trim`, or `trim_all` booleans
+@return array of byte-string fields
+*/
 LJLIB_CF(binary_split)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -381,6 +452,16 @@ LJLIB_CF(binary_split)
   return 1;
 }
 
+/***
+Replace literal byte matches without interpreting Lua patterns.
+The optional bounds preserve bytes outside the selected zero-based range.
+@function binary.replace
+@param data byte string to transform
+@param pattern non-empty string, pattern list, or compiled pattern
+@param replacement byte string to insert for each match
+@param[opt] options table with `global`, `start`, and `length` fields
+@return string with the requested replacements
+*/
 LJLIB_CF(binary_replace)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -413,6 +494,13 @@ LJLIB_CF(binary_replace)
   return 1;
 }
 
+/***
+Concatenate a sequence of byte strings with a separator.
+@function binary.join
+@param parts array of byte strings
+@param separator byte string placed between parts
+@return concatenated byte string
+*/
 LJLIB_CF(binary_join)
 {
   GCstr *separator = lj_lib_checkstr(L, 2);
@@ -482,12 +570,24 @@ static MSize binary_common(lua_State *L, int suffix)
   return common;
 }
 
+/***
+Measure the shared leading bytes of a string sequence.
+@function binary.longest_common_prefix
+@param parts array of byte strings
+@return number of bytes common to every part's prefix
+*/
 LJLIB_CF(binary_longest_common_prefix)
 {
   lua_pushnumber(L, (lua_Number)binary_common(L, 0));
   return 1;
 }
 
+/***
+Measure the shared trailing bytes of a string sequence.
+@function binary.longest_common_suffix
+@param parts array of byte strings
+@return number of bytes common to every part's suffix
+*/
 LJLIB_CF(binary_longest_common_suffix)
 {
   lua_pushnumber(L, (lua_Number)binary_common(L, 1));

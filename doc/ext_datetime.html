@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental UTC Date and Time Library</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental UTC Date and Time Library</h1>
+</div>
+<div id="main">
+<p>
+This local experimental extension provides ISO-8601, proleptic-Gregorian
+calendar values and UTC datetimes. It is preloaded by LuaJIT, but becomes
+visible only after <tt>require</tt>. It deliberately does not use the host
+local timezone for conversions.
+</p>
+
+<pre class="code">
+local datetime = require("datetime")
+
+local released = assert(datetime.from_iso8601("2026-07-23T14:30:00Z"))
+local tomorrow = assert(datetime.add(released, 24 * 60 * 60))
+
+local date = assert(datetime.date(2024, 2, 29))
+assert(datetime.day_of_week(date) == 4)  -- Thursday; Monday is 1.
+</pre>
+
+<h2>Value shapes</h2>
+<p>
+Values are ordinary Lua tables with named fields, intentionally making them
+easy to inspect and use with this fork's table patterns. <tt>date</tt> creates
+<tt>{ year, month, day }</tt>; <tt>time</tt> creates
+<tt>{ hour, minute, second, microsecond }</tt>; and <tt>naive</tt> combines
+both field sets without a zone.
+</p>
+<p>
+UTC datetime values have the same date/time fields plus
+<tt>time_zone = "Etc/UTC"</tt>, <tt>zone_abbr = "UTC"</tt>,
+<tt>utc_offset = 0</tt>, and <tt>std_offset = 0</tt>. The offset and zone
+fields are deliberately present so a future timezone-database module has a
+stable value shape to target.
+</p>
+
+<h2>Functions</h2>
+<table class="table">
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><tt>date(year, month, day)</tt></td><td>Build a validated date.</td></tr>
+<tr><td><tt>time(hour, minute, second [, microsecond])</tt></td><td>Build a validated time.</td></tr>
+<tr><td><tt>naive(year, month, day, hour, minute, second [, microsecond])</tt></td><td>Build a validated timezone-free datetime.</td></tr>
+<tr><td><tt>from_naive(naive [, zone])</tt></td><td>Make a UTC datetime. Only omitted or <tt>"Etc/UTC"</tt> zones currently work.</td></tr>
+<tr><td><tt>from_unix(seconds [, microsecond [, zone]])</tt></td><td>Convert a Unix timestamp to UTC.</td></tr>
+<tr><td><tt>to_unix(datetime)</tt></td><td>Return <tt>seconds, microsecond</tt>.</td></tr>
+<tr><td><tt>utc_now()</tt></td><td>Read the UTC wall clock with microsecond resolution where the platform provides it.</td></tr>
+<tr><td><tt>date_add(date, days)</tt>, <tt>date_diff(left, right)</tt></td><td>Add or measure calendar days.</td></tr>
+<tr><td><tt>add(datetime, seconds)</tt>, <tt>diff(left, right)</tt></td><td>Add seconds or return normalized <tt>seconds, microsecond</tt> differences.</td></tr>
+<tr><td><tt>compare(left, right)</tt></td><td>Return <tt>-1</tt>, <tt>0</tt>, or <tt>1</tt>.</td></tr>
+<tr><td><tt>is_leap_year(year)</tt>, <tt>day_of_week(date)</tt></td><td>Gregorian helpers; weekday uses Monday = 1 through Sunday = 7.</td></tr>
+<tr><td><tt>from_iso8601(text)</tt>, <tt>to_iso8601(datetime)</tt></td><td>Parse and format strict UTC <tt>...Z</tt> ISO-8601 values, with up to six fractional digits.</td></tr>
+<tr><td><tt>shift_zone(datetime, zone)</tt></td><td>Retain UTC or return an unavailable-timezone-database result.</td></tr>
+</table>
+
+<h2>Timezone boundary</h2>
+<p>
+The module supports only <tt>Etc/UTC</tt>. Asking it to construct or shift to a
+named zone returns <tt>nil, "time zone database unavailable"</tt>. It does
+not fall back to <tt>os.date</tt>'s process-local zone, because that would
+silently mishandle daylight-saving gaps and repeated wall times. A future TZif
+or IANA database provider can build on the existing zone and offset fields
+without changing UTC semantics.
+</p>
+<p>
+Calendar-invalid dates and parser failures return <tt>nil, message</tt>;
+wrong Lua argument types and out-of-range fields still raise ordinary Lua
+argument errors. Dates range from <tt>0000-01-01</tt> through
+<tt>9999-12-31</tt>; leap seconds are not represented.
+</p>
+</div>
+</body>
+</html>

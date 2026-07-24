@@ -1,6 +1,18 @@
 local test = require("test.ljtest")
 
+local gated_suite = test.describe("ljtest requirement metadata", {
+  requires = { luajit = 2, jit = true },
+}, function()
+  test.it("runs when LuaJIT and its JIT are available", function(t)
+    t.assert(true)
+  end)
+end)
+
 test.describe("ljtest assertions", function()
+  test.it("retains capability requirements on registered suites", function(t)
+    t.deep_equal(gated_suite.requires, { luajit = 2, jit = true })
+  end)
+
   test.it("compares scalars and structures", function(t)
     t.equal(12, 12)
     t.not_equal("left", "right")

@@ -19,6 +19,14 @@
 
 #define LJLIB_MODULE_utf8
 
+/***
+UTF-8 validation, conversion, and codepoint iteration.
+String positions are one-based byte positions, matching Lua's string library.
+@module utf8
+@usage local utf8 = require("utf8")
+@see doc/ext_utf8.html
+*/
+
 #define UTF8_MAX_CODEPOINT	0x10ffffu
 
 static int utf8_iscontinuation(uint8_t byte)
@@ -102,6 +110,14 @@ static size_t utf8_encode(uint32_t codepoint, char output[4])
 
 /* ------------------------------------------------------------------------ */
 
+/***
+Count UTF-8 codepoints in a byte-position slice.
+@function utf8.len
+@param string UTF-8 byte string
+@param[opt] initial one-based byte position, defaulting to 1
+@param[opt] final one-based byte position, defaulting to -1
+@return count, or nil and the one-based invalid byte position
+*/
 LJLIB_CF(utf8_len)
 {
   size_t length;
@@ -132,6 +148,14 @@ LJLIB_CF(utf8_len)
   return 1;
 }
 
+/***
+Return codepoints from a byte-position slice.
+@function utf8.codepoint
+@param string UTF-8 byte string
+@param[opt] initial one-based byte position
+@param[opt] final one-based byte position
+@return one integer codepoint for each decoded character
+*/
 LJLIB_CF(utf8_codepoint)
 {
   size_t length;
@@ -160,6 +184,12 @@ LJLIB_CF(utf8_codepoint)
   return count;
 }
 
+/***
+Encode one or more Unicode codepoints as UTF-8.
+@function utf8.char
+@param ... integer codepoints from 0 through 0x10ffff
+@return UTF-8 byte string
+*/
 LJLIB_CF(utf8_char)
 {
   int argument;
@@ -180,6 +210,14 @@ LJLIB_CF(utf8_char)
   return 1;
 }
 
+/***
+Locate a UTF-8 character boundary relative to a byte position.
+@function utf8.offset
+@param string UTF-8 byte string
+@param n number of character boundaries to move
+@param[opt] initial one-based byte position
+@return one-based byte position, or nil when no such boundary exists
+*/
 LJLIB_CF(utf8_offset)
 {
   size_t length;
@@ -241,6 +279,13 @@ LJLIB_CF(utf8_codes_iter)
   return 2;
 }
 
+/***
+Create a generic-for iterator over UTF-8 positions and codepoints.
+@function utf8.codes
+@param string UTF-8 byte string
+@return iterator function, original string state, and initial control value
+@usage for position, codepoint in utf8.codes(text) do end
+*/
 LJLIB_CF(utf8_codes)
 {
   luaL_checkstring(L, 1);
@@ -253,6 +298,10 @@ LJLIB_CF(utf8_codes)
 /* ------------------------------------------------------------------------ */
 
 /* Use %z instead of a literal NUL: LuaJIT's pattern parser is C-string based. */
+/***
+Lua pattern text that matches a valid UTF-8 byte sequence.
+@field utf8.charpattern
+*/
 static const char utf8_charpattern[] = "[%z\1-\x7f\xc2-\xf4][\x80-\xbf]*";
 
 #include "lj_libdef.h"

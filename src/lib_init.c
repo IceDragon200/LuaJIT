@@ -31,6 +31,7 @@ static const luaL_Reg lj_lib_load[] = {
 
 static const luaL_Reg lj_lib_preload[] = {
   { LUA_BINARYLIBNAME,	luaopen_binary },
+  { LUA_DATETIMELIBNAME,	luaopen_datetime },
   { LUA_ENCODINGLIBNAME,	luaopen_encoding },
   { LUA_TIMELIBNAME,	luaopen_time },
   { LUA_UTF8LIBNAME,	luaopen_utf8 },

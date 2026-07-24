@@ -20,6 +20,49 @@ Options:
 ]])
 end
 
+local function detect_capabilities()
+  local has_jit = type(jit) == "table"
+  local jit_enabled = false
+  local luajit_version = false
+  if has_jit then
+    jit_enabled = jit.status()
+    luajit_version = tonumber((jit.version or ""):match("%d+%.%d+")) or true
+  end
+  local has_ffi = pcall(require, "ffi")
+  local has_bit = pcall(require, "bit")
+  return {
+    luajit = luajit_version,
+    jit = jit_enabled,
+    ffi = has_ffi,
+    bit = has_bit,
+  }
+end
+
+local capabilities = detect_capabilities()
+
+local function requirements_met(entry)
+  local requirements = entry.requires
+  if not requirements then return true end
+  for index, required in ipairs(requirements) do
+    if not capabilities[required] then
+      return false, "requires " .. required
+    end
+  end
+  for required, expected in pairs(requirements) do
+    if type(required) == "string" then
+      local actual = capabilities[required]
+      if type(expected) == "number" then
+        if type(actual) ~= "number" or actual < expected then
+          return false, "requires " .. required .. ">=" .. expected
+        end
+      elseif actual ~= expected then
+        return false, "requires " .. required
+      end
+    end
+  end
+  return true
+end
+
 local options = {
   trace = false,
   list = false,
@@ -176,6 +219,11 @@ local function run_test(entry, suites)
     record_skip(entry)
     return
   end
+  local requirements_ok, reason = requirements_met(entry)
+  if not requirements_ok then
+    record_skip(entry, reason)
+    return
+  end
   summary.total = summary.total + 1
   local context = { name = entry.name, full_name = full_name(entry) }
   local failure = nil
@@ -220,6 +268,11 @@ local function run_suite(suite, parents, inherited_skip)
     skip_suite(suite, "disabled suite")
     return
   end
+  local requirements_ok, reason = requirements_met(suite)
+  if not requirements_ok then
+    skip_suite(suite, reason)
+    return
+  end
   local suites = {}
   for i, parent in ipairs(parents) do suites[i] = parent end
   suites[#suites + 1] = suite
@@ -249,12 +302,15 @@ local function run_suite(suite, parents, inherited_skip)
 end
 
 local function list_suite(suite, inherited_skip)
-  local skipped = inherited_skip or suite.skipped
+  local requirements_ok, reason = requirements_met(suite)
+  local skipped = inherited_skip or suite.skipped or not requirements_ok
   for _, entry in ipairs(suite.entries) do
     if entry.kind == "test" then
       if selected(entry) then
         summary.listed = summary.listed + 1
-        io.write((skipped or entry.skipped) and "SKIP " or "     ", full_name(entry), "\n")
+        local entry_ok = requirements_met(entry)
+        io.write((skipped or entry.skipped or not entry_ok) and "SKIP " or "     ",
+          full_name(entry), "\n")
       end
     else
       list_suite(entry, skipped)

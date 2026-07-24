@@ -30,6 +30,15 @@
 
 #define LJLIB_MODULE_time
 
+/***
+High-resolution process and wall-clock timing.
+Monotonic values are suitable for elapsed-time measurement; wall-clock values
+can jump when the system clock changes.
+@module time
+@usage local time = require("time")
+@see doc/ext_time.html
+*/
+
 static int time_monotonic(lua_Number *seconds)
 {
 #if LJ_TARGET_WINDOWS
@@ -101,6 +110,12 @@ static int time_wall(lua_Number *seconds)
 
 /* ------------------------------------------------------------------------ */
 
+/***
+Read a monotonic clock in seconds.
+The epoch is unspecified and only differences between readings are meaningful.
+@function time.monotonic
+@return non-decreasing seconds as a Lua number
+*/
 LJLIB_CF(time_monotonic)
 {
   lua_Number seconds;
@@ -111,6 +126,12 @@ LJLIB_CF(time_monotonic)
   return 1;
 }
 
+/***
+Read the current Unix-style wall clock in seconds.
+This value is not monotonic and may move backwards after a clock adjustment.
+@function time.wall
+@return seconds since the Unix epoch as a Lua number
+*/
 LJLIB_CF(time_wall)
 {
   lua_Number seconds;
@@ -121,6 +142,11 @@ LJLIB_CF(time_wall)
   return 1;
 }
 
+/***
+Read CPU time consumed by this process.
+@function time.cpu
+@return process CPU seconds as a Lua number
+*/
 LJLIB_CF(time_cpu)
 {
   clock_t ticks = clock();

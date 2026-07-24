@@ -20,6 +20,13 @@
 
 #define LJLIB_MODULE_encoding
 
+/***
+Strict hexadecimal and base64 transformations for byte strings.
+@module encoding
+@usage local encoding = require("encoding")
+@see doc/ext_encoding.html
+*/
+
 static int encoding_invalid(lua_State *L, const char *message)
 {
   lua_pushnil(L);
@@ -35,6 +42,13 @@ static int encoding_hex_value(uint8_t c)
   return -1;
 }
 
+/***
+Encode bytes as hexadecimal text.
+@function encoding.hex_encode
+@param data byte string to encode
+@param[opt] upper truthy to select uppercase A through F digits
+@return hexadecimal string
+*/
 LJLIB_CF(encoding_hex_encode)
 {
   static const char lower[] = "0123456789abcdef";
@@ -54,6 +68,12 @@ LJLIB_CF(encoding_hex_encode)
   return 1;
 }
 
+/***
+Decode strict hexadecimal text.
+@function encoding.hex_decode
+@param text even-length hexadecimal string
+@return byte string, or nil and an explanation for invalid text
+*/
 LJLIB_CF(encoding_hex_decode)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
@@ -114,6 +134,12 @@ static void encoding_base64_encode(lua_State *L, GCstr *input, int urlsafe)
   setstrV(L, L->top++, lj_buf_str(L, out));
 }
 
+/***
+Encode bytes using padded standard base64.
+@function encoding.base64_encode
+@param data byte string to encode
+@return padded base64 string
+*/
 LJLIB_CF(encoding_base64_encode)
 {
   encoding_base64_encode(L, lj_lib_checkstr(L, 1), 0);
@@ -121,6 +147,12 @@ LJLIB_CF(encoding_base64_encode)
   return 1;
 }
 
+/***
+Encode bytes using unpadded URL-safe base64.
+@function encoding.base64url_encode
+@param data byte string to encode
+@return unpadded URL-safe base64 string
+*/
 LJLIB_CF(encoding_base64url_encode)
 {
   encoding_base64_encode(L, lj_lib_checkstr(L, 1), 1);
@@ -195,11 +227,23 @@ static int encoding_base64_decode(lua_State *L, GCstr *input, int urlsafe)
   return 1;
 }
 
+/***
+Decode strict padded standard base64.
+@function encoding.base64_decode
+@param text padded standard base64 string
+@return byte string, or nil and an explanation for invalid text
+*/
 LJLIB_CF(encoding_base64_decode)
 {
   return encoding_base64_decode(L, lj_lib_checkstr(L, 1), 0);
 }
 
+/***
+Decode URL-safe base64 with optional valid padding.
+@function encoding.base64url_decode
+@param text URL-safe base64 string
+@return byte string, or nil and an explanation for invalid text
+*/
 LJLIB_CF(encoding_base64url_decode)
 {
   return encoding_base64_decode(L, lj_lib_checkstr(L, 1), 1);

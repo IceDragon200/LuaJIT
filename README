@@ -14,3 +14,6 @@ Please point your favorite browser to:
 
  doc/luajit.html
 
+Public APIs in this experimental fork also carry source annotations using a
+Luadoc/LDoc-compatible tag vocabulary. See doc/API_ANNOTATIONS.md for the
+convention; no documentation generator is required to build or use the fork.

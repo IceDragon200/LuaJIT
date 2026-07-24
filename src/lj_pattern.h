@@ -1,6 +1,8 @@
 /*
 ** Pattern matching support.
 ** Local experimental extension.
+** Syntax and semantics are informed by Erlang and Elixir pattern matching.
+** This implementation was written independently for this fork.
 */
 
 #ifndef _LJ_PATTERN_H

@@ -17,6 +17,14 @@
 
 #define REGEXP_PATTERN_MT	"regexp.pattern"
 
+/***
+PCRE2-backed regular expressions.
+This optional module is available only when LuaJIT is built with `LJ_PCRE2=1`.
+@module regexp
+@usage local regexp = require("regexp")
+@see doc/ext_regexp.html
+*/
+
 typedef struct RegexpPattern {
   pcre2_code *code;
   uint32_t captures;
@@ -54,6 +62,14 @@ static int regexp_compile_error(lua_State *L, int error, PCRE2_SIZE offset)
   return 2;
 }
 
+/***
+Compile a PCRE2 pattern into a reusable pattern object.
+Accepted flags are `i`, `m`, `s`, `u`, and `x`.
+@function regexp.compile
+@param source PCRE2 pattern text
+@param[opt] flags string
+@return pattern object, or nil and a compile-error message
+*/
 static int regexp_compile(lua_State *L)
 {
   size_t length;
@@ -84,6 +100,16 @@ static int regexp_pattern_gc(lua_State *L)
   return 0;
 }
 
+/***
+Find the first match of a compiled pattern.
+Positions are one-based Lua byte indices. Captures follow the start and end
+positions; unmatched optional captures are returned as nil.
+@function regexp.Pattern:find
+@param self compiled pattern object
+@param subject byte string to search
+@param[opt] start one-based byte offset, defaulting to 1
+@return start, end, and capture strings; no results when there is no match
+*/
 static int regexp_pattern_find(lua_State *L)
 {
   RegexpPattern *pattern = regexp_check_pattern(L, 1);
@@ -135,6 +161,12 @@ static int regexp_pattern_tostring(lua_State *L)
   return 1;
 }
 
+/***
+Quote PCRE2 metacharacters in a literal string.
+@function regexp.escape
+@param text literal text to embed in a PCRE2 pattern
+@return escaped pattern text
+*/
 static int regexp_escape(lua_State *L)
 {
   size_t length, i;

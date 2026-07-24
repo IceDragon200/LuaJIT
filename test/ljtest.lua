@@ -47,8 +47,18 @@ local function append(entries, entry)
   return entry
 end
 
-local function add_suite(name, body, skipped)
+local function normalize_options(kind, options, body)
+  if type(options) == "function" then return {}, options end
+  if options == nil then return {}, body end
+  if type(options) ~= "table" then
+    error(kind .. " options must be a table", 3)
+  end
+  return options, body
+end
+
+local function add_suite(name, options, body, skipped)
   check_name("describe", name)
+  options, body = normalize_options("describe", options, body)
   check_function("describe", body)
   local parent = current
   local suite = append(parent.entries, {
@@ -56,6 +66,7 @@ local function add_suite(name, body, skipped)
     name = name,
     parent = parent,
     skipped = skipped,
+    requires = options.requires,
     entries = {},
     before_each = {},
     after_each = {},
@@ -69,8 +80,9 @@ local function add_suite(name, body, skipped)
   return suite
 end
 
-local function add_test(name, fn, skipped)
+local function add_test(name, options, fn, skipped)
   check_name("test", name)
+  options, fn = normalize_options("test", options, fn)
   check_function("test", fn)
   return append(current.entries, {
     kind = "test",
@@ -78,29 +90,30 @@ local function add_test(name, fn, skipped)
     fn = fn,
     parent = current,
     skipped = skipped,
+    requires = options.requires,
   })
 end
 
 --- Register a named group of tests. Groups may be nested.
-function test.describe(name, body)
-  return add_suite(name, body, false)
+function test.describe(name, options, body)
+  return add_suite(name, options, body, false)
 end
 
 --- Register a group whose tests are reported as skipped.
-function test.xdescribe(name, body)
-  return add_suite(name, body, true)
+function test.xdescribe(name, options, body)
+  return add_suite(name, options, body, true)
 end
 
 --- Register one test. The callback receives this module as its first argument.
-function test.test(name, fn)
-  return add_test(name, fn, false)
+function test.test(name, options, fn)
+  return add_test(name, options, fn, false)
 end
 
 test.it = test.test
 
 --- Register one test but do not execute it.
-function test.xtest(name, fn)
-  return add_test(name, fn, true)
+function test.xtest(name, options, fn)
+  return add_test(name, options, fn, true)
 end
 
 test.xit = test.xtest

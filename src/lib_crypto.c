@@ -31,6 +31,14 @@
 
 #define LJLIB_MODULE_crypto
 
+/***
+OpenSSL-backed cryptographic primitives for byte strings.
+This optional module is available only when LuaJIT is built with `LJ_OPENSSL=1`.
+@module crypto
+@usage local crypto = require("crypto")
+@see doc/ext_crypto.html
+*/
+
 static int crypto_name_is(GCstr *name, const char *literal)
 {
   size_t len = strlen(literal);
@@ -81,6 +89,12 @@ static int crypto_authentication_failed(lua_State *L)
   return 2;
 }
 
+/***
+Read cryptographically strong random bytes from OpenSSL.
+@function crypto.random_bytes
+@param length non-negative number of bytes to read
+@return byte string of exactly `length` bytes
+*/
 LJLIB_CF(crypto_random_bytes)
 {
   int32_t length = lj_lib_checkint(L, 1);
@@ -103,6 +117,14 @@ LJLIB_CF(crypto_random_bytes)
   return 1;
 }
 
+/***
+Calculate a binary message digest.
+Supported algorithms are `sha256`, `sha384`, and `sha512`.
+@function crypto.hash
+@param algorithm supported digest algorithm name
+@param data byte string to hash
+@return binary digest bytes
+*/
 LJLIB_CF(crypto_hash)
 {
   const EVP_MD *md = crypto_md(L, 1);
@@ -124,6 +146,15 @@ LJLIB_CF(crypto_hash)
   return 1;
 }
 
+/***
+Calculate a binary HMAC.
+Supported algorithms are `sha256`, `sha384`, and `sha512`.
+@function crypto.hmac
+@param algorithm supported digest algorithm name
+@param key secret key bytes
+@param data byte string to authenticate
+@return binary MAC bytes
+*/
 LJLIB_CF(crypto_hmac)
 {
   const EVP_MD *md = crypto_md(L, 1);
@@ -140,6 +171,18 @@ LJLIB_CF(crypto_hmac)
   return 1;
 }
 
+/***
+Derive key material with HKDF.
+Supported algorithms are `sha256`, `sha384`, and `sha512`; output length is
+limited to 255 digest lengths as required by HKDF.
+@function crypto.hkdf
+@param algorithm supported digest algorithm name
+@param ikm input key material bytes
+@param salt salt bytes
+@param info context bytes
+@param length requested output byte length
+@return derived key bytes
+*/
 LJLIB_CF(crypto_hkdf)
 {
   const EVP_MD *md = crypto_md(L, 1);
@@ -196,6 +239,13 @@ LJLIB_CF(crypto_hkdf)
   return 1;
 }
 
+/***
+Compare two byte strings without early exit for equal-length inputs.
+@function crypto.constant_time_equal
+@param left byte string
+@param right byte string
+@return boolean equality result
+*/
 LJLIB_CF(crypto_constant_time_equal)
 {
   GCstr *left = lj_lib_checkstr(L, 1);
@@ -227,6 +277,18 @@ static void crypto_aead_inputs(lua_State *L, int keyarg, int noncearg,
   *pnonce = nonce;
 }
 
+/***
+Encrypt and authenticate bytes with an AEAD cipher.
+Supported ciphers are `aes-256-gcm` and `chacha20-poly1305`. Keys must be 32
+bytes and nonces must be 12 bytes.
+@function crypto.aead_encrypt
+@param cipher supported AEAD cipher name
+@param key 32-byte secret key
+@param nonce 12-byte nonce; callers must prevent reuse for a key
+@param plaintext byte string to encrypt
+@param[opt] aad associated-data byte string
+@return ciphertext, 16-byte authentication tag
+*/
 LJLIB_CF(crypto_aead_encrypt)
 {
   const EVP_CIPHER *cipher = crypto_aead_cipher(L, 1);
@@ -277,6 +339,19 @@ LJLIB_CF(crypto_aead_encrypt)
   return 2;
 }
 
+/***
+Verify and decrypt AEAD ciphertext.
+Authentication failure returns `nil, "authentication failed"` rather than
+plaintext. The cipher, key, and nonce constraints match `crypto.aead_encrypt`.
+@function crypto.aead_decrypt
+@param cipher supported AEAD cipher name
+@param key 32-byte secret key
+@param nonce 12-byte nonce
+@param ciphertext byte string to decrypt
+@param[opt] aad associated-data byte string when a tag follows
+@param tag 16-byte authentication tag
+@return plaintext, or nil and an authentication-failure message
+*/
 LJLIB_CF(crypto_aead_decrypt)
 {
   const EVP_CIPHER *cipher = crypto_aead_cipher(L, 1);
