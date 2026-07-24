@@ -3,7 +3,7 @@
 ** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Major portions taken verbatim or adapted from the Lua interpreter.
-** Copyright (C) 1994-2008 Lua.org, PUC-Rio. See Copyright Notice in lua.h
+** Copyright (C) 1994-2026 Lua.org, PUC-Rio. See Copyright Notice in lua.h
 */
 
 #include <stdio.h>
@@ -33,6 +33,18 @@
 #define lua_stdin_is_tty()	1
 #endif
 
+/*
+** Readline is an optional convenience for the standalone frontend. It is
+** loaded at runtime, so embedding LuaJIT and normal builds gain no new link
+** dependency. iOS intentionally retains the small stdio frontend.
+*/
+#if LJ_TARGET_POSIX && !LJ_TARGET_IOS
+#include <dlfcn.h>
+#define LJ_USE_READLINE	1
+#else
+#define LJ_USE_READLINE	0
+#endif
+
 #if !LJ_TARGET_CONSOLE
 #include <signal.h>
 
@@ -55,6 +67,94 @@ static void signal_set(int sig, void (*h)(int))
 static lua_State *globalL = NULL;
 static const char *progname = LUA_PROGNAME;
 static char *empty_argv[2] = { NULL, NULL };
+
+/* Name used by current Lua for an optional readline shared library. */
+#define LUA_RLLIB_VAR	"LUA_READLINELIB"
+
+#if LJ_USE_READLINE
+
+typedef char *(*l_readlineT)(const char *prompt);
+typedef void (*l_addhistT)(const char *line);
+
+static l_readlineT l_readline_fn = NULL;
+static l_addhistT l_addhist = NULL;
+static int l_noenv = 0;
+
+#if LJ_TARGET_OSX
+static const char *const l_readline_defaults[] = {
+  "libreadline.dylib",
+  "/opt/homebrew/opt/readline/lib/libreadline.dylib",
+  "/usr/local/opt/readline/lib/libreadline.dylib",
+  "libedit.dylib",
+  NULL
+};
+#else
+static const char *const l_readline_defaults[] = {
+  "libreadline.so", "libreadline.so.8", "libreadline.so.7", "libedit.so",
+  NULL
+};
+#endif
+
+static void l_initreadline(void)
+{
+  const char *override = l_noenv ? NULL : getenv(LUA_RLLIB_VAR);
+  const char *const *names = override ? NULL : l_readline_defaults;
+  const char *name;
+
+  do {
+    void *lib;
+    char **rlname;
+
+    name = override ? override : *names++;
+    if (name == NULL) break;
+    lib = dlopen(name, RTLD_NOW | RTLD_LOCAL);
+    if (lib == NULL) continue;
+    l_readline_fn = (l_readlineT)dlsym(lib, "readline");
+    if (l_readline_fn == NULL) {
+      dlclose(lib);
+      continue;
+    }
+    l_addhist = (l_addhistT)dlsym(lib, "add_history");
+    rlname = (char **)dlsym(lib, "rl_readline_name");
+    if (rlname != NULL) *rlname = "luajit";
+    return;
+  } while (override == NULL);
+}
+
+static char *l_readline(char *buffer, const char *prompt)
+{
+  if (l_readline_fn != NULL)
+    return l_readline_fn(prompt);
+  fputs(prompt, stdout);
+  fflush(stdout);
+  return fgets(buffer, LUA_MAXINPUT, stdin);
+}
+
+static void l_saveline(const char *line)
+{
+  if (l_addhist != NULL) l_addhist(line);
+}
+
+static void l_freeline(char *line)
+{
+  if (l_readline_fn != NULL) free(line);
+}
+
+#else
+
+static void l_initreadline(void) { }
+
+static char *l_readline(char *buffer, const char *prompt)
+{
+  fputs(prompt, stdout);
+  fflush(stdout);
+  return fgets(buffer, LUA_MAXINPUT, stdin);
+}
+
+static void l_saveline(const char *line) { (void)line; }
+static void l_freeline(char *line) { (void)line; }
+
+#endif
 
 #if !LJ_TARGET_CONSOLE
 static void lstop(lua_State *L, lua_Debug *ar)
@@ -199,15 +299,13 @@ static int dolibrary(lua_State *L, const char *name)
   return report(L, docall(L, 1, 1));
 }
 
-static void write_prompt(lua_State *L, int firstline)
+/* Leave the prompt value on the stack until the input line has been read. */
+static const char *get_prompt(lua_State *L, int firstline)
 {
   const char *p;
   lua_getfield(L, LUA_GLOBALSINDEX, firstline ? "_PROMPT" : "_PROMPT2");
   p = lua_tostring(L, -1);
-  if (p == NULL) p = firstline ? LUA_PROMPT : LUA_PROMPT2;
-  fputs(p, stdout);
-  fflush(stdout);
-  lua_pop(L, 1);  /* remove global */
+  return p == NULL ? (firstline ? LUA_PROMPT : LUA_PROMPT2) : p;
 }
 
 static int incomplete(lua_State *L, int status)
@@ -226,16 +324,17 @@ static int incomplete(lua_State *L, int status)
 
 static int pushline(lua_State *L, int firstline)
 {
-  char buf[LUA_MAXINPUT];
-  write_prompt(L, firstline);
-  if (fgets(buf, LUA_MAXINPUT, stdin)) {
-    size_t len = strlen(buf);
-    if (len > 0 && buf[len-1] == '\n')
-      buf[len-1] = '\0';
-    lua_pushstring(L, buf);
-    return 1;
-  }
-  return 0;
+  char buffer[LUA_MAXINPUT];
+  char *line = l_readline(buffer, get_prompt(L, firstline));
+  size_t len;
+
+  lua_pop(L, 1);  /* Remove the prompt value. */
+  if (line == NULL) return 0;  /* No input. */
+  len = strlen(line);
+  if (len > 0 && line[len-1] == '\n') line[--len] = '\0';
+  lua_pushlstring(L, line, len);
+  l_freeline(line);
+  return 1;
 }
 
 /*
@@ -259,10 +358,22 @@ static int addreturn(lua_State *L)
   return status;
 }
 
+static void checklocal(const char *line)
+{
+  static const char space[] = " \t";
+  static const size_t size = sizeof("local") - 1;
+
+  line += strspn(line, space);
+  if (strncmp(line, "local", size) == 0 && strchr(space, line[size]) != NULL)
+    fputs("warning: locals do not survive across lines in interactive mode\n",
+          stderr);
+}
+
 /* Read continuation lines until a complete statement or a final error. */
 static int multiline(lua_State *L)
 {
   int status;
+  checklocal(lua_tostring(L, 1));
   for (;;) {  /* repeat until gets a complete line */
     status = luaL_loadbuffer(L, lua_tostring(L, 1), lua_strlen(L, 1),
 			     "=stdin");
@@ -292,6 +403,7 @@ static int loadline(lua_State *L)
     }
     status = multiline(L);  /* Try a statement, with continuation lines. */
   }
+  if (lua_tostring(L, 1)[0] != '\0') l_saveline(lua_tostring(L, 1));
   lua_remove(L, 1);  /* remove line */
   return status;
 }
@@ -301,6 +413,7 @@ static void dotty(lua_State *L)
   int status;
   const char *oldprogname = progname;
   progname = NULL;
+  if (lua_stdin_is_tty()) l_initreadline();
   while ((status = loadline(L)) != -1) {
     if (status == LUA_OK) status = docall(L, 0, 0);
     report(L, status);
@@ -576,6 +689,9 @@ static int pmain(lua_State *L)
   }
 
   if ((flags & FLAGS_NOENV)) {
+#if LJ_USE_READLINE
+    l_noenv = 1;
+#endif
     lua_pushboolean(L, 1);
     lua_setfield(L, LUA_REGISTRYINDEX, "LUA_NOENV");
   }

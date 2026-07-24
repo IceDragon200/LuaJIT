@@ -15,6 +15,7 @@ interpreter=${1:-./src/luajit}
 output=$(printf '%s\n' \
   '1 + 2' \
   'answer = 42' \
+  'local ephemeral = 1' \
   'answer' \
   'string.byte("ab", 1, 2)' \
   '=10 * 2' \
@@ -26,6 +27,7 @@ output=$(printf '%s\n' \
 
 actual=$(printf '%s\n' "$output" | sed '1,2d')
 expected='3
+warning: locals do not survive across lines in interactive mode
 42
 97	98
 20

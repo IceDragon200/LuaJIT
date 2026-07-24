@@ -27,6 +27,8 @@ src/luajit test/run.lua --seed 42 test/*_test.lua
 `make test`. It drives `luajit -i` through standard input so that the frontend
 itself—not merely the compiler—keeps accepting bare expressions, normal
 statements, multiline input, multiple results, and LuaJIT's legacy `=` alias.
+It also verifies the warning for top-level `local` declarations, whose scope
+ends with that individual REPL submission.
 
 `--filter` is a case-insensitive plain substring match against the full test
 name. `--list` lists the matching tests without executing them; `--fail-fast`

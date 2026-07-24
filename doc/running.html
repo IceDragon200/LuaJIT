@@ -106,6 +106,21 @@ The traditional leading <tt>=</tt> expression shorthand remains accepted. As
 before, redefining the global <tt>print</tt> changes how displayed values are
 rendered.
 </p>
+<p>
+Each submitted command is its own chunk, so a top-level <tt>local</tt> does
+not survive to the next prompt. LuaJIT emits a reminder for that common REPL
+surprise; use a global while exploring, or keep related code in one multi-line
+submission.
+</p>
+<p>
+On POSIX terminals, LuaJIT also looks for a compatible <tt>readline</tt>
+library at runtime. When one is available, the REPL has line editing and
+in-session command history (including the arrow keys) without adding a build
+or embedding dependency. Set <tt>LUA_READLINELIB</tt> to an explicit shared
+library path to choose a particular readline-compatible implementation; use
+<tt>-E</tt> to ignore that environment setting. If no library is found,
+LuaJIT transparently keeps the regular stdio REPL.
+</p>
 
 <h2 id="options">Command Line Options</h2>
 <p>
