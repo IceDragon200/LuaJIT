@@ -20,6 +20,7 @@
 #define LUA_DBLIBNAME	"debug"
 #define LUA_BITLIBNAME	"bit"
 #define LUA_BINARYLIBNAME	"binary"
+#define LUA_CRYPTOLIBNAME	"crypto"
 #define LUA_DATETIMELIBNAME	"datetime"
 #define LUA_ENCODINGLIBNAME	"encoding"
 #define LUA_TIMELIBNAME	"time"

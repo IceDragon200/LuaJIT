@@ -418,7 +418,7 @@ LJLIB_CF(crypto_aead_decrypt)
 
 LUALIB_API int luaopen_crypto(lua_State *L)
 {
-  LJ_LIB_REG(L, "crypto", crypto);
+  LJ_LIB_REG(L, LUA_CRYPTOLIBNAME, crypto);
   return 1;
 }
 
