@@ -623,8 +623,9 @@ static int table_match_node(lua_State *L, GCtab *table,
   const uint8_t *fmt = *pfmt;
   for (;;) {
     const uint8_t *key, *literal;
-    uint32_t keylen, index, literal_len, intbits;
-    uint64_t numbits;
+    uint32_t keylen, index, literal_len;
+    uint32_t intbits = 0;
+    uint64_t numbits = 0;
     cTValue *value;
     int required;
     uint8_t opcode;
