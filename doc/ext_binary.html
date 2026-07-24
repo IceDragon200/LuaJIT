@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Experimental Binary Library</title>
+<meta charset="utf-8">
+<meta name="Language" content="en">
+<link rel="stylesheet" type="text/css" href="bluequad.css" media="screen">
+<link rel="stylesheet" type="text/css" href="bluequad-print.css" media="print">
+</head>
+<body>
+<div id="site">
+<a href="https://luajit.org"><span>Lua<span id="logo">JIT</span></span></a>
+</div>
+<div id="head">
+<h1>Experimental Binary Library</h1>
+</div>
+<div id="main">
+<p>
+This local experimental extension provides literal, byte-oriented operations on
+Lua strings. It is preloaded by LuaJIT, but is visible only after
+<tt>require</tt>. The API borrows its shape from Erlang's <tt>binary</tt>
+module while retaining Lua's string representation.
+</p>
+
+<pre class="code">
+local binary = require("binary")
+
+local start, length = binary.match("GET /health HTTP/1.1", " ")
+-- start == 3, length == 1; offsets are zero-based.
+
+local words = binary.split("a,b,c", ",", { global = true })
+local data = binary.replace("a.b", ".", "?", { global = true })
+</pre>
+
+<p>
+Every search is literal: characters such as <tt>.</tt>, <tt>*</tt>, and
+<tt>[</tt> have no pattern meaning. Byte offsets and lengths are zero-based,
+which makes the returned <tt>offset, length</tt> pairs suitable for binary
+protocol work. Lua strings are immutable values, so <tt>part</tt>,
+<tt>split</tt>, and <tt>replace</tt> create Lua strings rather than Erlang
+sub-binary views.
+</p>
+
+<h2>Functions</h2>
+<table class="table">
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><tt>at(data, offset)</tt></td><td>Return one byte (0&ndash;255). Raises for an out-of-range offset.</td></tr>
+<tr><td><tt>first(data)</tt>, <tt>last(data)</tt></td><td>Return the first or last byte. Raise for an empty binary.</td></tr>
+<tr><td><tt>part(data, offset [, length])</tt></td><td>Return a strict byte slice. Without <tt>length</tt>, slice to the end.</td></tr>
+<tr><td><tt>compile_pattern(patterns)</tt></td><td>Copy one non-empty string or a sequence of non-empty strings into a reusable compiled pattern.</td></tr>
+<tr><td><tt>match(data, pattern [, options])</tt></td><td>Return <tt>offset, length</tt> for the first literal match, or no results.</td></tr>
+<tr><td><tt>matches(data, pattern [, options])</tt></td><td>Return a table of non-overlapping <tt>{ offset, length }</tt> matches.</td></tr>
+<tr><td><tt>split(data, pattern [, options])</tt></td><td>Return fields split at literal matches.</td></tr>
+<tr><td><tt>replace(data, pattern, replacement [, options])</tt></td><td>Replace literal matches.</td></tr>
+<tr><td><tt>join(parts, separator)</tt></td><td>Join a sequence of byte strings.</td></tr>
+<tr><td><tt>longest_common_prefix(parts)</tt></td><td>Return the common prefix length in bytes.</td></tr>
+<tr><td><tt>longest_common_suffix(parts)</tt></td><td>Return the common suffix length in bytes.</td></tr>
+</table>
+
+<h2>Patterns and options</h2>
+<p>
+A pattern is one non-empty string, a sequence of non-empty strings, or a value
+returned by <tt>compile_pattern</tt>. With several patterns, the earliest
+match wins; ties use the first supplied pattern. <tt>matches</tt> advances past
+each match, so its results do not overlap.
+</p>
+<p>
+For <tt>match</tt> and <tt>matches</tt>, <tt>{ start = N, length = N }</tt>
+limits searching to a byte range. <tt>replace</tt> accepts the same scope and
+preserves bytes outside it. <tt>split</tt> and <tt>replace</tt> replace or
+split only the first occurrence by default; pass <tt>{ global = true }</tt>
+for every occurrence. <tt>split</tt> additionally accepts <tt>trim = true</tt>
+to drop trailing empty fields or <tt>trim_all = true</tt> to drop all empty
+fields.
+</p>
+<p>
+Hexadecimal and base64 encoding remain in the separate
+<a href="ext_encoding.html"><tt>encoding</tt></a> module. Integer packing,
+unaligned bit syntax, and BEAM-style zero-copy accounting are intentionally
+outside this first byte-aligned API.
+</p>
+</div>
+</body>
+</html>

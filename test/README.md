@@ -53,3 +53,20 @@ so return counts and `nil` holes are never lost.
 
 Use `describe` and `test` (or its `it` alias) for registration. `xdescribe`
 and `xtest`/`xit` keep intentional skips visible in the final result.
+
+## Upstream baseline coverage
+
+The `baseline_*_test.lua` modules translate behavioral coverage from Lua's
+upstream `testes/` suite into `ljtest` examples. They cover language syntax,
+functions and closures, tables, metamethods, coroutines, errors, core
+libraries, bytecode loading, environments, and basic collection. They test the
+LuaJIT language baseline and its supported standard-library behavior; they do
+not assert Lua-5.5-only syntax or runtime internals. Each module names its
+upstream source areas in a header comment, so individual cases can be extended
+from the corresponding upstream tests without importing their procedural
+harness.
+
+`modern_syntax_test.lua` and `bytecode_test.lua` cover LuaJIT-specific recent
+syntax and bytecode guarantees. They intentionally compile extension examples
+with `loadstring`, which makes parser regressions show up as ordinary test
+failures and lets bytecode round trips exercise the same compiled forms.

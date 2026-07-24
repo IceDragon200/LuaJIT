@@ -1,0 +1,36 @@
+-- Behavioral coverage adapted from Lua's upstream testes/strings.lua,
+-- testes/math.lua, and testes/sort.lua.
+local test = require("test.ljtest")
+
+test.describe("baseline libraries", function()
+  test.it("handles string slicing, searching, bytes, and substitutions", function(t)
+    t.equal(string.sub("abcdef", 2, -2), "bcde")
+    t.results(t.pack(3, 5), function() return string.find("xxabcxx", "abc", 1, true) end)
+    t.equal(string.char(65, 0, 66), "A\0B")
+    t.results(t.pack(65, 0, 66), function() return string.byte("A\0B", 1, 3) end)
+    t.equal((string.gsub("a-b-a", "a", "x")), "x-b-x")
+  end)
+
+  test.it("formats strings and applies captures", function(t)
+    t.equal(string.format("%04d:%s", 7, "ok"), "0007:ok")
+    local first, second = string.match("name=lua", "(%a+)=(%a+)")
+    t.equal(first, "name")
+    t.equal(second, "lua")
+  end)
+
+  test.it("handles standard math operations", function(t)
+    t.equal(math.abs(-12), 12)
+    t.equal(math.floor(3.9), 3)
+    t.equal(math.ceil(3.1), 4)
+    t.results(t.pack(3, 0.25), function() return math.modf(3.25) end)
+    t.equal(math.max(-1, 4, 2), 4)
+    t.equal(math.min(-1, 4, 2), -1)
+  end)
+
+  test.it("converts numeric strings and rejects malformed values", function(t)
+    t.equal(tonumber("  -12.5 "), -12.5)
+    t.equal(tonumber("ff", 16), 255)
+    t.equal(tonumber("not a number"), nil)
+    t.equal(tonumber("2", 2), nil)
+  end)
+end)

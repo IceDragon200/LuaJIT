@@ -19,6 +19,7 @@
 #define LUA_LOADLIBNAME	"package"
 #define LUA_DBLIBNAME	"debug"
 #define LUA_BITLIBNAME	"bit"
+#define LUA_BINARYLIBNAME	"binary"
 #define LUA_ENCODINGLIBNAME	"encoding"
 #define LUA_TIMELIBNAME	"time"
 #define LUA_UTF8LIBNAME	"utf8"
@@ -34,6 +35,7 @@ LUALIB_API int luaopen_os(lua_State *L);
 LUALIB_API int luaopen_package(lua_State *L);
 LUALIB_API int luaopen_debug(lua_State *L);
 LUALIB_API int luaopen_bit(lua_State *L);
+LUALIB_API int luaopen_binary(lua_State *L);
 LUALIB_API int luaopen_encoding(lua_State *L);
 LUALIB_API int luaopen_time(lua_State *L);
 LUALIB_API int luaopen_utf8(lua_State *L);

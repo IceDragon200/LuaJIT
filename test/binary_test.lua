@@ -1,0 +1,66 @@
+local test = require("test.ljtest")
+local binary = require("binary")
+
+test.describe("binary module", function()
+  test.it("reads and slices strings with zero-based byte offsets", function(t)
+    t.equal(binary.at("Lua", 0), string.byte("L"))
+    t.equal(binary.first("Lua"), string.byte("L"))
+    t.equal(binary.last("Lua"), string.byte("a"))
+    t.equal(binary.part("abcdef", 1, 3), "bcd")
+    t.equal(binary.part("abcdef", 4), "ef")
+    t.equal(binary.part("abcdef", 6), "")
+    t.raises(function() binary.at("", 0) end, "offset out of range")
+    t.raises(function() binary.part("abc", 2, 2) end, "length must")
+  end)
+
+  test.it("finds literal single and multi-pattern matches", function(t)
+    t.results(t.pack(2, 3), function()
+      return binary.match("xxcatdog", "cat")
+    end)
+    t.results(t.pack(0, 2), function()
+      return binary.match("ab--ba", { "ba", "ab" })
+    end)
+    t.results(t.pack(), function()
+      return binary.match("LuaJIT", "BEAM")
+    end)
+    t.deep_equal(binary.matches("aaaa", "aa"), { { 0, 2 }, { 2, 2 } })
+    t.results(t.pack(2, 3), function()
+      return binary.match("zzabczz", "abc", { start = 2, length = 3 })
+    end)
+  end)
+
+  test.it("uses copied, reusable compiled patterns", function(t)
+    local source = { "--", "==" }
+    local pattern = binary.compile_pattern(source)
+    source[1] = "??"
+
+    t.equal(type(pattern), "userdata")
+    t.results(t.pack(1, 2), function()
+      return binary.match("x---y", pattern)
+    end)
+    t.deep_equal(binary.matches("a==b--c", pattern), { { 1, 2 }, { 4, 2 } })
+    t.raises(function() binary.compile_pattern("") end, "empty binary patterns")
+  end)
+
+  test.it("splits and replaces literal data without Lua pattern semantics", function(t)
+    t.deep_equal(binary.split("a,,b,", ","), { "a", ",b," })
+    t.deep_equal(binary.split("a,,b,", ",", { global = true }),
+      { "a", "", "b", "" })
+    t.deep_equal(binary.split("a,,b,", ",", { global = true, trim = true }),
+      { "a", "", "b" })
+    t.deep_equal(binary.split("a,,b,", ",", { global = true, trim_all = true }),
+      { "a", "b" })
+    t.equal(binary.replace("a.b.a", ".", "?", { global = true }), "a?b?a")
+    t.equal(binary.replace("xxabcxx", "b", "!", { start = 2, length = 3 }),
+      "xxa!cxx")
+  end)
+
+  test.it("joins data and measures common byte prefixes and suffixes", function(t)
+    t.equal(binary.join({ "a", "b", "c" }, "\0"), "a\0b\0c")
+    t.equal(binary.join({}, ","), "")
+    t.equal(binary.longest_common_prefix({ "beam", "beard", "bear" }), 3)
+    t.equal(binary.longest_common_suffix({ "hello.lua", "world.lua", "lua" }), 3)
+    t.equal(binary.longest_common_prefix({}), 0)
+    t.equal(binary.longest_common_suffix({}), 0)
+  end)
+end)
