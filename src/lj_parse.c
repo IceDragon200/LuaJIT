@@ -3669,7 +3669,6 @@ static void parse_bin_constructor(LexState *ls, ExpDesc *e)
       binfmt_put_u32(fmt, literal->len);
       lj_buf_putstr(fmt, literal);
     } else {
-      int is_rest;
       checklimit(fs, nvalues, LJ_MAX_LOCVAR, "binary construction fields");
       /* Keep the following '<decoder>' out of the expression while allowing
       ** a signed numeric literal, e.g. @b{-128 <s16>}. */
@@ -3677,9 +3676,9 @@ static void parse_bin_constructor(LexState *ls, ExpDesc *e)
       expr_tonextreg(fs, &value);
       nvalues++;
       lex_check(ls, '<');
-      is_rest = parse_bin_decoder(ls, fmt, BINDEC_CAPTURE, 0, NULL);
+      // Ignoring the is_rest here, as that is a valid construct
+      parse_bin_decoder(ls, fmt, BINDEC_CAPTURE, 0, NULL);
       lex_check(ls, '>');
-      if (is_rest && ls->tok != '}') err_syntax(ls, LJ_ERR_XSYNTAX);
     }
     if (!lex_opt(ls, ',') && !lex_opt(ls, ';')) break;
   }
