@@ -69,6 +69,7 @@ LUA_API int lua_loadx(lua_State *L, lua_Reader reader, void *data,
   ls.chunkarg = chunkname ? chunkname : "?";
   ls.mode = mode;
   lj_buf_init(L, &ls.sb);
+  lj_buf_init(L, &ls.binfmt);
   status = lj_vm_cpcall(L, NULL, &ls, cpparser);
   lj_lex_cleanup(L, &ls);
   lj_gc_check(L);

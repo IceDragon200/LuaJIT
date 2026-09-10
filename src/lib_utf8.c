@@ -17,7 +17,6 @@
 
 /* ------------------------------------------------------------------------ */
 
-#define LJLIB_MODULE_utf8
 
 /***
 UTF-8 validation, conversion, and codepoint iteration.
@@ -118,7 +117,7 @@ Count UTF-8 codepoints in a byte-position slice.
 @param[opt] final one-based byte position, defaulting to -1
 @return count, or nil and the one-based invalid byte position
 */
-LJLIB_CF(utf8_len)
+static int lj_cf_utf8_len(lua_State *L)
 {
   size_t length;
   const uint8_t *string = (const uint8_t *)luaL_checklstring(L, 1, &length);
@@ -156,7 +155,7 @@ Return codepoints from a byte-position slice.
 @param[opt] final one-based byte position
 @return one integer codepoint for each decoded character
 */
-LJLIB_CF(utf8_codepoint)
+static int lj_cf_utf8_codepoint(lua_State *L)
 {
   size_t length;
   const uint8_t *string = (const uint8_t *)luaL_checklstring(L, 1, &length);
@@ -190,7 +189,7 @@ Encode one or more Unicode codepoints as UTF-8.
 @param ... integer codepoints from 0 through 0x10ffff
 @return UTF-8 byte string
 */
-LJLIB_CF(utf8_char)
+static int lj_cf_utf8_char(lua_State *L)
 {
   int argument;
   int count = lua_gettop(L);
@@ -218,7 +217,7 @@ Locate a UTF-8 character boundary relative to a byte position.
 @param[opt] initial one-based byte position
 @return one-based byte position, or nil when no such boundary exists
 */
-LJLIB_CF(utf8_offset)
+static int lj_cf_utf8_offset(lua_State *L)
 {
   size_t length;
   const uint8_t *string = (const uint8_t *)luaL_checklstring(L, 1, &length);
@@ -254,7 +253,7 @@ LJLIB_CF(utf8_offset)
   return 1;
 }
 
-LJLIB_CF(utf8_codes_iter)
+static int lj_cf_utf8_codes_iter(lua_State *L)
 {
   size_t length;
   const uint8_t *string = (const uint8_t *)luaL_checklstring(L, 1, &length);
@@ -286,7 +285,7 @@ Create a generic-for iterator over UTF-8 positions and codepoints.
 @return iterator function, original string state, and initial control value
 @usage for position, codepoint in utf8.codes(text) do end
 */
-LJLIB_CF(utf8_codes)
+static int lj_cf_utf8_codes(lua_State *L)
 {
   luaL_checkstring(L, 1);
   lua_pushcfunction(L, lj_cf_utf8_codes_iter);
@@ -304,11 +303,20 @@ Lua pattern text that matches a valid UTF-8 byte sequence.
 */
 static const char utf8_charpattern[] = "[%z\1-\x7f\xc2-\xf4][\x80-\xbf]*";
 
-#include "lj_libdef.h"
+/* These extensions use ordinary C functions, without fast-function IDs. */
+static const luaL_Reg utf8_funcs[] = {
+  {"len", lj_cf_utf8_len},
+  {"codepoint", lj_cf_utf8_codepoint},
+  {"char", lj_cf_utf8_char},
+  {"offset", lj_cf_utf8_offset},
+  {"codes_iter", lj_cf_utf8_codes_iter},
+  {"codes", lj_cf_utf8_codes},
+  {NULL, NULL}
+};
 
 LUALIB_API int luaopen_utf8(lua_State *L)
 {
-  LJ_LIB_REG(L, LUA_UTF8LIBNAME, utf8);
+  luaL_register(L, LUA_UTF8LIBNAME, utf8_funcs);
   lua_pushlstring(L, utf8_charpattern, sizeof(utf8_charpattern)-1);
   lua_setfield(L, -2, "charpattern");
   return 1;

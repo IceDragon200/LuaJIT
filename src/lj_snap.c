@@ -328,7 +328,7 @@ static void snap_useuv(GCproto *pt, uint8_t *udf)
       if (o->gch.gct == ~LJ_TPROTO) {
 	for (j = 0; j < gco2pt(o)->sizeuv; j++) {
 	  uint32_t v = proto_uv(gco2pt(o))[j];
-	  if ((v & PROTO_UV_LOCAL)) {
+	  if (v != PROTO_UV_PATTERN && (v & PROTO_UV_LOCAL)) {
 	    udf[(v & 0xff)] = 0;
 	  }
 	}

@@ -29,7 +29,6 @@
 
 /* ------------------------------------------------------------------------ */
 
-#define LJLIB_MODULE_crypto
 
 /***
 OpenSSL-backed cryptographic primitives for byte strings.
@@ -95,7 +94,7 @@ Read cryptographically strong random bytes from OpenSSL.
 @param length non-negative number of bytes to read
 @return byte string of exactly `length` bytes
 */
-LJLIB_CF(crypto_random_bytes)
+static int lj_cf_crypto_random_bytes(lua_State *L)
 {
   int32_t length = lj_lib_checkint(L, 1);
   SBuf *out;
@@ -125,7 +124,7 @@ Supported algorithms are `sha256`, `sha384`, and `sha512`.
 @param data byte string to hash
 @return binary digest bytes
 */
-LJLIB_CF(crypto_hash)
+static int lj_cf_crypto_hash(lua_State *L)
 {
   const EVP_MD *md = crypto_md(L, 1);
   GCstr *data = lj_lib_checkstr(L, 2);
@@ -155,7 +154,7 @@ Supported algorithms are `sha256`, `sha384`, and `sha512`.
 @param data byte string to authenticate
 @return binary MAC bytes
 */
-LJLIB_CF(crypto_hmac)
+static int lj_cf_crypto_hmac(lua_State *L)
 {
   const EVP_MD *md = crypto_md(L, 1);
   GCstr *key = lj_lib_checkstr(L, 2);
@@ -183,7 +182,7 @@ limited to 255 digest lengths as required by HKDF.
 @param length requested output byte length
 @return derived key bytes
 */
-LJLIB_CF(crypto_hkdf)
+static int lj_cf_crypto_hkdf(lua_State *L)
 {
   const EVP_MD *md = crypto_md(L, 1);
   GCstr *ikm = lj_lib_checkstr(L, 2);
@@ -246,7 +245,7 @@ Compare two byte strings without early exit for equal-length inputs.
 @param right byte string
 @return boolean equality result
 */
-LJLIB_CF(crypto_constant_time_equal)
+static int lj_cf_crypto_constant_time_equal(lua_State *L)
 {
   GCstr *left = lj_lib_checkstr(L, 1);
   GCstr *right = lj_lib_checkstr(L, 2);
@@ -289,7 +288,7 @@ bytes and nonces must be 12 bytes.
 @param[opt] aad associated-data byte string
 @return ciphertext, 16-byte authentication tag
 */
-LJLIB_CF(crypto_aead_encrypt)
+static int lj_cf_crypto_aead_encrypt(lua_State *L)
 {
   const EVP_CIPHER *cipher = crypto_aead_cipher(L, 1);
   GCstr *key, *nonce, *plaintext, *aad;
@@ -352,7 +351,7 @@ plaintext. The cipher, key, and nonce constraints match `crypto.aead_encrypt`.
 @param tag 16-byte authentication tag
 @return plaintext, or nil and an authentication-failure message
 */
-LJLIB_CF(crypto_aead_decrypt)
+static int lj_cf_crypto_aead_decrypt(lua_State *L)
 {
   const EVP_CIPHER *cipher = crypto_aead_cipher(L, 1);
   GCstr *key, *nonce, *ciphertext_input, *aad, *tag;
@@ -414,11 +413,21 @@ LJLIB_CF(crypto_aead_decrypt)
 
 /* ------------------------------------------------------------------------ */
 
-#include "lj_libdef.h"
+/* These extensions use ordinary C functions, without fast-function IDs. */
+static const luaL_Reg crypto_funcs[] = {
+  {"random_bytes", lj_cf_crypto_random_bytes},
+  {"hash", lj_cf_crypto_hash},
+  {"hmac", lj_cf_crypto_hmac},
+  {"hkdf", lj_cf_crypto_hkdf},
+  {"constant_time_equal", lj_cf_crypto_constant_time_equal},
+  {"aead_encrypt", lj_cf_crypto_aead_encrypt},
+  {"aead_decrypt", lj_cf_crypto_aead_decrypt},
+  {NULL, NULL}
+};
 
 LUALIB_API int luaopen_crypto(lua_State *L)
 {
-  LJ_LIB_REG(L, LUA_CRYPTOLIBNAME, crypto);
+  luaL_register(L, LUA_CRYPTOLIBNAME, crypto_funcs);
   return 1;
 }
 

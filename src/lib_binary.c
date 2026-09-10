@@ -19,7 +19,6 @@
 
 /* ------------------------------------------------------------------------ */
 
-#define LJLIB_MODULE_binary
 
 /***
 Literal, byte-oriented operations on immutable Lua strings.
@@ -249,7 +248,7 @@ Return the byte at a zero-based offset.
 @param offset zero-based byte offset
 @return byte integer from 0 through 255
 */
-LJLIB_CF(binary_at)
+static int lj_cf_binary_at(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   MSize offset = binary_check_bound(L, 2, input->len, "offset");
@@ -266,7 +265,7 @@ Return the first byte of a non-empty string.
 @param data non-empty byte string
 @return byte integer from 0 through 255
 */
-LJLIB_CF(binary_first)
+static int lj_cf_binary_first(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
 
@@ -281,7 +280,7 @@ Return the last byte of a non-empty string.
 @param data non-empty byte string
 @return byte integer from 0 through 255
 */
-LJLIB_CF(binary_last)
+static int lj_cf_binary_last(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
 
@@ -298,7 +297,7 @@ Return a strict zero-based byte slice.
 @param[opt] length number of bytes; omitting it selects through the end
 @return string copied byte slice
 */
-LJLIB_CF(binary_part)
+static int lj_cf_binary_part(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   MSize start = binary_check_bound(L, 2, input->len, "offset");
@@ -317,7 +316,7 @@ Create an opaque, reusable literal search pattern.
 @param patterns non-empty string or sequence of non-empty strings
 @return compiled pattern accepted by the search and replacement functions
 */
-LJLIB_CF(binary_compile_pattern)
+static int lj_cf_binary_compile_pattern(lua_State *L)
 {
   int type = lua_type(L, 1);
   int count;
@@ -362,7 +361,7 @@ wins. The optional bounds use zero-based byte offsets.
 @param[opt] options table with optional `start` and `length` byte bounds
 @return offset, length for the first match; no results when no match exists
 */
-LJLIB_CF(binary_match)
+static int lj_cf_binary_match(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   BinaryPattern pattern = binary_pattern_open(L, 2);
@@ -387,7 +386,7 @@ Find all non-overlapping literal matches in a string.
 @param[opt] options table with optional `start` and `length` byte bounds
 @return array of `{ offset, length }` tables in match order
 */
-LJLIB_CF(binary_matches)
+static int lj_cf_binary_matches(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   int result;
@@ -423,7 +422,7 @@ them.
 @param[opt] options table with `global`, `trim`, or `trim_all` booleans
 @return array of byte-string fields
 */
-LJLIB_CF(binary_split)
+static int lj_cf_binary_split(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   int result;
@@ -462,7 +461,7 @@ The optional bounds preserve bytes outside the selected zero-based range.
 @param[opt] options table with `global`, `start`, and `length` fields
 @return string with the requested replacements
 */
-LJLIB_CF(binary_replace)
+static int lj_cf_binary_replace(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   GCstr *replacement = lj_lib_checkstr(L, 3);
@@ -501,7 +500,7 @@ Concatenate a sequence of byte strings with a separator.
 @param separator byte string placed between parts
 @return concatenated byte string
 */
-LJLIB_CF(binary_join)
+static int lj_cf_binary_join(lua_State *L)
 {
   GCstr *separator = lj_lib_checkstr(L, 2);
   size_t count;
@@ -576,7 +575,7 @@ Measure the shared leading bytes of a string sequence.
 @param parts array of byte strings
 @return number of bytes common to every part's prefix
 */
-LJLIB_CF(binary_longest_common_prefix)
+static int lj_cf_binary_longest_common_prefix(lua_State *L)
 {
   lua_pushnumber(L, (lua_Number)binary_common(L, 0));
   return 1;
@@ -588,7 +587,7 @@ Measure the shared trailing bytes of a string sequence.
 @param parts array of byte strings
 @return number of bytes common to every part's suffix
 */
-LJLIB_CF(binary_longest_common_suffix)
+static int lj_cf_binary_longest_common_suffix(lua_State *L)
 {
   lua_pushnumber(L, (lua_Number)binary_common(L, 1));
   return 1;
@@ -596,10 +595,25 @@ LJLIB_CF(binary_longest_common_suffix)
 
 /* ------------------------------------------------------------------------ */
 
-#include "lj_libdef.h"
+/* These extensions use ordinary C functions, without fast-function IDs. */
+static const luaL_Reg binary_funcs[] = {
+  {"at", lj_cf_binary_at},
+  {"first", lj_cf_binary_first},
+  {"last", lj_cf_binary_last},
+  {"part", lj_cf_binary_part},
+  {"compile_pattern", lj_cf_binary_compile_pattern},
+  {"match", lj_cf_binary_match},
+  {"matches", lj_cf_binary_matches},
+  {"split", lj_cf_binary_split},
+  {"replace", lj_cf_binary_replace},
+  {"join", lj_cf_binary_join},
+  {"longest_common_prefix", lj_cf_binary_longest_common_prefix},
+  {"longest_common_suffix", lj_cf_binary_longest_common_suffix},
+  {NULL, NULL}
+};
 
 LUALIB_API int luaopen_binary(lua_State *L)
 {
-  LJ_LIB_REG(L, LUA_BINARYLIBNAME, binary);
+  luaL_register(L, LUA_BINARYLIBNAME, binary_funcs);
   return 1;
 }

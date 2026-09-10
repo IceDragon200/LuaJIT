@@ -36,7 +36,8 @@
 /* If you perform *any* kind of private modifications to the bytecode itself
 ** or to the dump format, you *must* set BCDUMP_VERSION to 0x80 or higher.
 */
-#define BCDUMP_VERSION		2
+#define BCDUMP_VERSION		0x80
+#define BCDUMP_VERSION_LEGACY	2  /* Unmodified chunks retain the public format. */
 
 /* Compatibility flags. */
 #define BCDUMP_F_BE		0x01

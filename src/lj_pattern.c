@@ -43,12 +43,12 @@ static uint64_t bin_read_uint(const uint8_t *data, MSize pos,
   return value;
 }
 
-static const TValue *pattern_pin_value(lua_State *L, const TValue *pins,
+static const TValue *pattern_pin_value(lua_State *L, ptrdiff_t pinbase,
 				       uint32_t npins, uint32_t index)
 {
   if (index >= npins)
     lj_err_callermsg(L, "invalid pattern format");
-  return pins + index;
+  return L->base + pinbase + index;
 }
 
 static void bin_set_int(TValue *out, uint64_t value, uint8_t nbits,
@@ -149,12 +149,13 @@ static int bin_encode_float(lua_Number n, uint8_t nbits, uint64_t *out);
 
 /* Decode input according to format, returning 0 for an ordinary mismatch. */
 static int bin_match(lua_State *L, GCstr *input, GCstr *format,
-		     const TValue *pins, uint32_t npins, MSize *pfailpos)
+		     ptrdiff_t pinbase, uint32_t npins, MSize *pfailpos)
 {
   const uint8_t *data = (const uint8_t *)strdata(input);
   const uint8_t *fmt = (const uint8_t *)strdata(format);
   const uint8_t *fmtend = fmt + format->len;
   MSize pos = 0;
+  ptrdiff_t capturebase = L->top-L->base;
 
   if (pfailpos) *pfailpos = 0;
   while (fmt < fmtend) {
@@ -250,6 +251,7 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
       size = binfmt_get_u32(&fmt, fmtend);
       if (size == UINT32_MAX || size > input->len-pos)
 	return 0;
+      if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
       setstrV(L, L->top++, lj_str_new(L, (const char *)data+pos, size));
       pos += size;
       break;
@@ -260,6 +262,7 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
       pos += size;
       break;
     case BINFMT_REST:
+      if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
       setstrV(L, L->top++,
 	      lj_str_new(L, (const char *)data+pos, input->len-pos));
       pos = input->len;
@@ -267,12 +270,41 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
     case BINFMT_SKIP_REST:
       pos = input->len;
       break;
+    case BINFMT_BYTES_REF:
+    case BINFMT_SKIP_BYTES_REF:
+    case BINFMT_PIN_BYTES_REF: {
+      uint32_t index = binfmt_get_u32(&fmt, fmtend);
+      cTValue *capture;
+      lua_Number length;
+      if (index >= (uint32_t)(L->top-L->base-capturebase))
+	lj_err_callermsg(L, "invalid binary pattern length reference");
+      capture = L->base + capturebase + index;
+      if (!tvisnumber(capture)) return 0;
+      length = numberVnum(capture);
+      /* Check before narrowing: all supported integer widths fit in double,
+      ** but their lengths may exceed MSize or the remaining input. */
+      if (!(length >= 0 && length <= (lua_Number)(input->len-pos))) return 0;
+      size = (MSize)length;
+      if ((lua_Number)size != length) return 0;
+      if (opcode == BINFMT_BYTES_REF) {
+	if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
+	setstrV(L, L->top++, lj_str_new(L, (const char *)data+pos, size));
+      } else if (opcode == BINFMT_PIN_BYTES_REF) {
+	cTValue *pin;
+	index = binfmt_get_u32(&fmt, fmtend);
+	pin = pattern_pin_value(L, pinbase, npins, index);
+	if (!tvisstr(pin) || strV(pin)->len != size ||
+	    (size && memcmp(data+pos, strdata(strV(pin)), size) != 0)) return 0;
+      }
+      pos += size;
+      break;
+    }
     case BINFMT_PIN_LITERAL: {
       const TValue *pin;
       size = binfmt_get_u32(&fmt, fmtend);
       if (size == UINT32_MAX)
 	lj_err_callermsg(L, "invalid binary pattern format");
-      pin = pattern_pin_value(L, pins, npins, size);
+      pin = pattern_pin_value(L, pinbase, npins, size);
       if (!tvisstr(pin)) return 0;
       size = strV(pin)->len;
       if (size > input->len-pos ||
@@ -298,7 +330,7 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
       value = bin_read_uint(data, pos, nbytes, flags & BINFMT_F_LITTLE);
       pos += nbytes;
       bin_set_int(&actual, value, nbits, flags & BINFMT_F_SIGNED);
-      if (!lj_obj_equal(&actual, pattern_pin_value(L, pins, npins, size))) return 0;
+      if (!lj_obj_equal(&actual, pattern_pin_value(L, pinbase, npins, size))) return 0;
       break;
     }
     case BINFMT_PIN_FLOAT: {
@@ -321,7 +353,7 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
       pos += nbytes;
       if (!bin_decode_float(bits, nbits, &value)) return 0;
       setnumV(&actual, value);
-      if (!lj_obj_equal(&actual, pattern_pin_value(L, pins, npins, size))) return 0;
+      if (!lj_obj_equal(&actual, pattern_pin_value(L, pinbase, npins, size))) return 0;
       break;
     }
     case BINFMT_PIN_BYTES: {
@@ -331,7 +363,7 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
       index = binfmt_get_u32(&fmt, fmtend);
       if (size == UINT32_MAX || index == UINT32_MAX)
 	lj_err_callermsg(L, "invalid binary pattern format");
-      pin = pattern_pin_value(L, pins, npins, index);
+      pin = pattern_pin_value(L, pinbase, npins, index);
       if (!tvisstr(pin) || strV(pin)->len != size || size > input->len-pos ||
 	  (size && memcmp(data+pos, strdata(strV(pin)), size) != 0))
 	return 0;
@@ -343,7 +375,7 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
       size = binfmt_get_u32(&fmt, fmtend);
       if (size == UINT32_MAX)
 	lj_err_callermsg(L, "invalid binary pattern format");
-      pin = pattern_pin_value(L, pins, npins, size);
+      pin = pattern_pin_value(L, pinbase, npins, size);
       if (!tvisstr(pin) || strV(pin)->len != input->len-pos ||
 	  (strV(pin)->len && memcmp(data+pos, strdata(strV(pin)),
 				       strV(pin)->len) != 0))
@@ -371,8 +403,11 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
 	lj_err_callermsg(L, "invalid binary pattern format");
       nbytes = nbits >> 3;
       if (count > (input->len-pos) / nbytes) return 0;
-      if (opcode == BINFMT_ARRAY)
+      if (opcode == BINFMT_ARRAY) {
+	if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
 	array = lj_tab_new(L, count, 0);
+	settabV(L, L->top++, array);  /* Root before filling the array. */
+      }
       for (i = 0; i < count; i++) {
 	uint64_t bits = bin_read_uint(data, pos, nbytes, flags & BINFMT_F_LITTLE);
 	pos += nbytes;
@@ -384,10 +419,6 @@ static int bin_match(lua_State *L, GCstr *input, GCstr *format,
 	  bin_set_int(lj_tab_setint(L, array, (int32_t)i+1), bits, nbits,
 		      flags & BINFMT_F_SIGNED);
 	}
-      }
-      if (array) {
-	if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
-	settabV(L, L->top++, array);
       }
       break;
     }
@@ -404,7 +435,7 @@ int lj_pattern_bin_match(lua_State *L, GCstr *input, GCstr *format,
 {
   MSize top = (MSize)(L->top - L->base);
   MSize failpos;
-  if (!bin_match(L, input, format, pins, npins, &failpos))
+  if (!bin_match(L, input, format, npins ? pins-L->base : 0, npins, &failpos))
     lj_err_callermsg(L, lj_strfmt_pushf(L,
 	"binary pattern match failed at byte %u", (uint32_t)failpos));
   lj_gc_check(L);
@@ -416,16 +447,20 @@ int lj_pattern_try_bin_match(lua_State *L, TValue *input, GCstr *format,
 {
   MSize top = (MSize)(L->top - L->base);
 
-  if (tvisstr(input)) {
-    if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
+  GCstr *str = tvisstr(input) ? strV(input) : NULL;
+  ptrdiff_t pinbase = npins ? pins-L->base : 0;
+
+  if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
+  if (str) {
     setboolV(L->top++, 1);
-    if (bin_match(L, strV(input), format, pins, npins, NULL)) {
+    if (bin_match(L, str, format, pinbase, npins, NULL)) {
       lj_gc_check(L);
       return (int)((L->top - L->base) - top);
     }
   }
   L->top = L->base + top;
   setboolV(L->top++, 0);
+  lj_gc_check(L);  /* Failed clauses may also have allocated captures. */
   return 1;
 }
 
@@ -563,8 +598,10 @@ static int table_rest_excludes(const uint8_t *fmt, const uint8_t *end,
   for (i = 0; i < count; i++) {
     if (fmt >= end) return 0;
     if (*fmt++ == TBLREST_POS) {
+      TValue expected;
       if (!tablefmt_get_u32(&fmt, end, &index)) return 0;
-      if (tvisint(candidate) && intV(candidate) == (int32_t)index)
+      setintV(&expected, (int32_t)index);
+      if (lj_obj_equal(candidate, &expected))
 	return 1;
     } else if (fmt[-1] == TBLREST_KEY) {
       if (!tablefmt_get_string(&fmt, end, &key, &keylen)) return 0;
@@ -617,10 +654,12 @@ static int table_match_rest(lua_State *L, GCtab *table,
 /* A NULL table means an optional parent was absent: bind nils and skip tests. */
 static int table_match_node(lua_State *L, GCtab *table,
 			    const uint8_t **pfmt, const uint8_t *end,
-			    const TValue *pins, uint32_t npins,
-			    TableMatchFailure *failure)
+			    ptrdiff_t pinbase, uint32_t npins,
+			    TableMatchFailure *failure, uint32_t depth)
 {
   const uint8_t *fmt = *pfmt;
+  if (depth > LJ_MAX_XLEVEL)
+    lj_err_callermsg(L, "table pattern nesting too deep");
   for (;;) {
     const uint8_t *key, *literal;
     uint32_t keylen, index, literal_len;
@@ -732,7 +771,7 @@ static int table_match_node(lua_State *L, GCtab *table,
       if (required && (!value || tvisnil(value))) {
 	table_match_fail(L, failure, TBLFAIL_POS, index, NULL, 0); return 0;
       }
-      if (!table_match_pin(value, pattern_pin_value(L, pins, npins, intbits))) {
+      if (!table_match_pin(value, pattern_pin_value(L, pinbase, npins, intbits))) {
 	table_match_fail(L, failure, TBLFAIL_POS, index, NULL, 0); return 0;
       }
       break;
@@ -747,7 +786,7 @@ static int table_match_node(lua_State *L, GCtab *table,
       if (required && (!value || tvisnil(value))) {
 	table_match_fail(L, failure, TBLFAIL_KEY, 0, key, keylen); return 0;
       }
-      if (!table_match_pin(value, pattern_pin_value(L, pins, npins, intbits))) {
+      if (!table_match_pin(value, pattern_pin_value(L, pinbase, npins, intbits))) {
 	table_match_fail(L, failure, TBLFAIL_KEY, 0, key, keylen); return 0;
       }
       break;
@@ -764,14 +803,14 @@ static int table_match_node(lua_State *L, GCtab *table,
 	lj_err_callermsg(L, "invalid table pattern format");
       value = table ? table_match_key(L, table, key, keylen) : NULL;
       if (!table) {
-	if (!table_match_node(L, NULL, &fmt, end, pins, npins, failure)) return 0;
+	if (!table_match_node(L, NULL, &fmt, end, pinbase, npins, failure, depth+1)) return 0;
       } else if (!value || tvisnil(value)) {
 	if (required) {
 	  table_match_fail(L, failure, TBLFAIL_KEY, 0, key, keylen); return 0;
 	}
-	if (!table_match_node(L, NULL, &fmt, end, pins, npins, failure)) return 0;
+	if (!table_match_node(L, NULL, &fmt, end, pinbase, npins, failure, depth+1)) return 0;
       } else if (tvistab(value)) {
-	if (!table_match_node(L, tabV(value), &fmt, end, pins, npins, failure)) return 0;
+	if (!table_match_node(L, tabV(value), &fmt, end, pinbase, npins, failure, depth+1)) return 0;
       } else {
 	table_match_fail(L, failure, TBLFAIL_KEY, 0, key, keylen);
 	return 0;
@@ -792,7 +831,8 @@ int lj_pattern_table_match(lua_State *L, GCtab *table, GCstr *format,
   TableMatchFailure failure;
 
   failure.kind = 0;
-  if (!table_match_node(L, table, &fmt, end, pins, npins, &failure)) {
+  if (!table_match_node(L, table, &fmt, end, npins ? pins-L->base : 0,
+			npins, &failure, 1)) {
     if (failure.kind == TBLFAIL_KEY)
 	lj_err_callermsg(L, lj_strfmt_pushf(L,
 	  "table pattern match failed at key '%s'", strdata(failure.key)));
@@ -813,10 +853,13 @@ int lj_pattern_try_table_match(lua_State *L, TValue *input, GCstr *format,
   const uint8_t *end = fmt + format->len;
   MSize top = (MSize)(L->top - L->base);
 
-  if (tvistab(input)) {
-    if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
+  GCtab *table = tvistab(input) ? tabV(input) : NULL;
+  ptrdiff_t pinbase = npins ? pins-L->base : 0;
+
+  if (!lua_checkstack(L, 1)) lj_err_caller(L, LJ_ERR_STKOV);
+  if (table) {
     setboolV(L->top++, 1);
-    if (table_match_node(L, tabV(input), &fmt, end, pins, npins, NULL) &&
+    if (table_match_node(L, table, &fmt, end, pinbase, npins, NULL, 1) &&
 	fmt == end) {
       lj_gc_check(L);
       return (int)((L->top - L->base) - top);
@@ -824,6 +867,7 @@ int lj_pattern_try_table_match(lua_State *L, TValue *input, GCstr *format,
   }
   L->top = L->base + top;
   setboolV(L->top++, 0);
+  lj_gc_check(L);  /* Failed clauses may also have allocated captures. */
   return 1;
 }
 
@@ -862,30 +906,38 @@ static int bin_encode_int(lua_Number n, uint8_t nbits, int issigned,
   return 1;
 }
 
+/* Round discarded bits to nearest, with ties to an even significand. */
+static uint32_t bin_round_shift(uint64_t value, unsigned shift)
+{
+  uint64_t halfway = (uint64_t)1 << (shift-1);
+  uint64_t remainder = value & ((halfway << 1)-1);
+  uint32_t rounded = (uint32_t)(value >> shift);
+  return rounded + (remainder > halfway ||
+		    (remainder == halfway && (rounded & 1)));
+}
+
 static int bin_encode_float16(lua_Number value, uint16_t *out)
 {
-  float f = (float)value;
-  uint32_t word, mantissa, sign;
+  uint64_t word, mantissa;
+  uint32_t sign, half;
   int exp;
-  LJ_STATIC_ASSERT(sizeof(f) == 4);
-  memcpy(&word, &f, sizeof(f));
-  if ((word & 0x7f800000) == 0x7f800000) return 0;
-  sign = word >> 16 & 0x8000;
-  mantissa = word & 0x007fffff;
-  exp = (int)((word >> 23) & 0xff) - 127 + 15;
+  LJ_STATIC_ASSERT(sizeof(value) == 8);
+  memcpy(&word, &value, sizeof(word));
+  if ((word & U64x(7ff00000,00000000)) == U64x(7ff00000,00000000))
+    return 0;
+  sign = (uint32_t)(word >> 48) & 0x8000;
+  mantissa = word & U64x(000fffff,ffffffff);
+  exp = (int)((word >> 52) & 0x7ff) - 1023 + 15;
   if (exp >= 31) return 0;
   if (exp <= 0) {
-    int shift;
-    if ((word & 0x7fffffff) == 0) { *out = (uint16_t)sign; return 1; }
-    if (exp < -10) return 0;
-    mantissa |= 0x00800000;
-    shift = 14-exp;
-    *out = (uint16_t)(sign | ((mantissa + ((uint32_t)1 << (shift-1))) >> shift));
+    if (exp < -10) { *out = (uint16_t)sign; return 1; }
+    half = bin_round_shift(mantissa | U64x(00100000,00000000),
+			   (unsigned)(43-exp));
   } else {
-    uint32_t half = sign | ((uint32_t)exp << 10) | ((mantissa + 0x1000) >> 13);
-    if ((half & 0x7c00) == 0x7c00) return 0;
-    *out = (uint16_t)half;
+    half = ((uint32_t)exp << 10) + bin_round_shift(mantissa, 42);
+    if (half >= 0x7c00) return 0;
   }
+  *out = (uint16_t)(sign | half);
   return 1;
 }
 

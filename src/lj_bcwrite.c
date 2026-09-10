@@ -384,6 +384,24 @@ static void bcwrite_proto(BCWriteCtx *ctx, GCproto *pt)
   }
 }
 
+/* Private helper descriptors must never be mistaken for parent upvalue slots
+** by an older runtime. Ordinary chunks still use the unmodified dump format. */
+static int bcwrite_pattern_helpers(GCproto *pt)
+{
+  MSize i;
+  for (i = 0; i < pt->sizeuv; i++)
+    if (proto_uv(pt)[i] == PROTO_UV_PATTERN) return 1;
+  if (pt->flags & PROTO_CHILD) {
+    GCRef *kr = mref(pt->k, GCRef) - (ptrdiff_t)pt->sizekgc;
+    for (i = 0; i < pt->sizekgc; i++) {
+      GCobj *o = gcref(kr[i]);
+      if (o->gch.gct == ~LJ_TPROTO && bcwrite_pattern_helpers(gco2pt(o)))
+	return 1;
+    }
+  }
+  return 0;
+}
+
 /* Write header of bytecode dump. */
 static void bcwrite_header(BCWriteCtx *ctx)
 {
@@ -394,7 +412,7 @@ static void bcwrite_header(BCWriteCtx *ctx)
   *p++ = BCDUMP_HEAD1;
   *p++ = BCDUMP_HEAD2;
   *p++ = BCDUMP_HEAD3;
-  *p++ = BCDUMP_VERSION;
+  *p++ = bcwrite_pattern_helpers(ctx->pt) ? BCDUMP_VERSION : BCDUMP_VERSION_LEGACY;
   *p++ = (ctx->flags & (BCDUMP_F_STRIP | BCDUMP_F_FR2)) +
 	 LJ_BE*BCDUMP_F_BE +
 	 ((ctx->pt->flags & PROTO_FFI) ? BCDUMP_F_FFI : 0) +
@@ -451,4 +469,3 @@ int lj_bcwrite(lua_State *L, GCproto *pt, lua_Writer writer, void *data,
   bcwrite_heap_resize(&ctx, 0);
   return status;
 }
-

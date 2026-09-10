@@ -19,6 +19,22 @@
 This is a local experimental language extension. It lowers patterns to normal
 LuaJIT calls, jumps, and assignments; it does not add VM bytecodes.
 </p>
+<p>
+Compiler-generated calls use native helpers held in a private closed upvalue.
+They work with empty function environments and without opening the standard
+libraries. Replacing globals such as <tt>rawequal</tt>, <tt>pcall</tt>, or
+<tt>__table_match</tt> does not change newly compiled pattern operations.
+The private binding is an implementation detail, not a security boundary
+against privileged debug or registry access.
+</p>
+<p>
+The Lua 5.1 C API and runtime object layouts, including <tt>lua_State</tt>,
+are unchanged. A function using these helpers consumes one existing upvalue
+slot. Its bytecode dump (or a dump containing it) uses fork format version
+<tt>0x80</tt> to restore that binding when loaded, including stripped dumps.
+Ordinary chunks retain upstream dump version 2; existing version 2 dumps remain
+readable. Recompile older pattern chunks to use the private bindings.
+</p>
 
 <h2>Table patterns</h2>
 <pre class="code">
@@ -33,6 +49,14 @@ Bare names capture named keys. A leading dot captures a positional value.
 Literal scalar values constrain a field or positional slot. A trailing
 <tt>!</tt> requires a present, non-nil value. <tt>_</tt> consumes a value
 without creating a binding.
+</p>
+<p>
+Each capture name must be unique within one pattern, including nested fields,
+rest captures, and an optional function-parameter alias. Duplicate names are
+compile errors, rather than equality constraints. Repeated wildcards are
+allowed. Separate patterns may reuse names, and ordinary Lua declarations
+retain their existing shadowing rules. Pins keep reading already visible
+bindings; they do not refer to earlier captures in the same pattern.
 </p>
 <pre class="code">
 local {kind, ...rest} = message
@@ -83,6 +107,11 @@ alias with <tt>le_</tt> for little-endian order. Float aliases are
 <tt>little</tt>, <tt>big</tt>, <tt>native</tt>, <tt>signed</tt>, and
 <tt>unsigned</tt>.
 </p>
+<p>
+Encoding <tt>f16</tt> rounds directly from the Lua number to the nearest
+binary16 value, with ties to an even significand. Underflow preserves the
+sign of zero; non-finite inputs and rounded overflow are rejected.
+</p>
 <pre class="code">
 local @b{position &lt;le_u16[3]&gt;} = data
 local data = @b{position &lt;le_u16[3]&gt;}
@@ -90,6 +119,24 @@ local data = @b{position &lt;le_u16[3]&gt;}
 <p>
 Numeric vectors capture or construct a Lua array table. Fields remain
 byte-aligned; arbitrary bit-width fields are intentionally unsupported.
+</p>
+<pre class="code">
+local @b{length &lt;u16&gt;, payload &lt;bytes(length)&gt;, rest &lt;bytes&gt;} = packet
+</pre>
+<p>
+In a binary pattern, <tt>bytes(length)</tt> may use an earlier scalar integer
+capture from that same pattern. The reference reads the decoded capture,
+even if an outer variable has the same name. It also works with skipped
+fields (<tt>_ &lt;bytes(length)&gt;</tt>) and pinned fields
+(<tt>^expected &lt;bytes(length)&gt;</tt>). A zero length matches an empty
+string. Negative lengths and lengths beyond the remaining input fail the
+match; strict patterns raise an error and case clauses may fall through.
+</p>
+<p>
+Self references, forward references, outer variables, floats, arrays, and byte
+captures cannot supply a dependent length. Length arithmetic is not supported.
+Dependent lengths apply to patterns, including function parameters and catches;
+binary constructors retain <tt>bytes</tt> and constant <tt>bytes(N)</tt>.
 </p>
 <p>
 Numbers may be used as typed binary literals in a pattern. The literal is
@@ -122,6 +169,32 @@ statement (with statement bodies) or as an expression (with one expression
 after each <tt>then</tt>). If no clause matches, <tt>case</tt> raises
 <tt>case clause did not match</tt>; write <tt>else</tt> for an intentional
 fallback.
+</p>
+<p>
+Guards currently use ordinary Lua expressions and truthiness: only
+<tt>false</tt> and <tt>nil</tt> reject a clause. Calls and metamethods are
+allowed, and errors propagate normally. This differs from
+Erlang's restricted guard expressions; a guard error is not an automatic
+pattern mismatch.
+</p>
+<p>
+<strong>Warning:</strong> guards should be free of side effects. Mutation
+during guard evaluation has undefined pattern-matching behavior. This includes
+mutation through called functions or metamethods, whether it changes the
+subject, captured values, pins, or other shared state. Do not rely on which
+mutations a clause or a later clause observes; perform updates in the selected
+clause body instead. Such mutations are not detected or rejected at runtime.
+This rule leaves ordinary Lua error handling unchanged and does not relax the
+runtime's memory-safety requirements.
+</p>
+<p>
+A case expression produces exactly one value and can appear in argument
+lists, constructors, arithmetic, or multiple assignments. Clause bindings
+remain local to their clause. Expressions compile directly into the enclosing
+function, without an internal closure allocation or call. Closures explicitly
+returned by a clause still retain that clause's captures. Ordinary identifiers and calls such as
+<tt>case(value)</tt> remain usable; <tt>case (value) do when ...</tt> starts
+a case with a parenthesized subject.
 </p>
 
 <h2>Try and catch</h2>
@@ -200,6 +273,12 @@ Strict binary matches report the byte where matching stopped. Strict table
 matches report the key or positional slot that failed. Individual <tt>case</tt>
 clauses continue to treat a mismatch as an ordinary failed clause; only a case
 with no matching clause and no <tt>else</tt> raises an error.
+</p>
+<p>
+Nested table patterns obey the normal parser syntax-depth limit. The legacy
+native matcher entry points also bound descriptor nesting. Both successful
+and failed matches advance collection when needed, so discarded captures do
+not indefinitely defer garbage collection.
 </p>
 </div>
 </body>

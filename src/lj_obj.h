@@ -412,6 +412,7 @@ typedef struct GCproto {
 
 #define PROTO_UV_LOCAL		0x8000	/* Upvalue for local slot. */
 #define PROTO_UV_IMMUTABLE	0x4000	/* Immutable upvalue. */
+#define PROTO_UV_PATTERN		0xffff	/* Closed private pattern-helper binding. */
 
 #define proto_kgc(pt, idx) \
   check_exp((uintptr_t)(intptr_t)(idx) >= ~(uintptr_t)(pt)->sizekgc+1u, \

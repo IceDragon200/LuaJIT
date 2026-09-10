@@ -12,6 +12,7 @@
 #include "lj_obj.h"
 #include "lj_gc.h"
 #include "lj_func.h"
+#include "lj_pattern.h"
 #include "lj_trace.h"
 #include "lj_vm.h"
 
@@ -126,7 +127,9 @@ static GCfunc *func_newL(lua_State *L, GCproto *pt, GCtab *env)
   GCfunc *fn = (GCfunc *)lj_mem_newgco(L, sizeLfunc((MSize)pt->sizeuv));
   fn->l.gct = ~LJ_TFUNC;
   fn->l.ffid = FF_LUA;
-  fn->l.nupvalues = 0;  /* Set to zero until upvalues are initialized. */
+  /* Keep the allocation size valid if an upvalue allocation throws. No GC
+  ** check or publication of the closure occurs until all refs are filled. */
+  fn->l.nupvalues = pt->sizeuv;
   /* NOBARRIER: Really a setgcref. But the GCfunc is new (marked white). */
   setmref(fn->l.pc, proto_bc(pt));
   setgcref(fn->l.env, obj2gco(env));
@@ -136,9 +139,21 @@ static GCfunc *func_newL(lua_State *L, GCproto *pt, GCtab *env)
   return fn;
 }
 
-/* Create a new Lua function with empty upvalues. */
+/* Find the private binding without changing the active VM stack. */
+static GCtab *func_pattern_helpers(lua_State *L, GCproto *pt)
+{
+  MSize i;
+  for (i = 0; i < pt->sizeuv; i++) {
+    if (proto_uv(pt)[i] == PROTO_UV_PATTERN)
+      return lj_pattern_helpers(L);
+  }
+  return NULL;
+}
+
+/* Create a new Lua function with empty user upvalues. */
 GCfunc *lj_func_newL_empty(lua_State *L, GCproto *pt, GCtab *env)
 {
+  GCtab *helpers = func_pattern_helpers(L, pt);
   GCfunc *fn = func_newL(L, pt, env);
   MSize i, nuv = pt->sizeuv;
   /* NOBARRIER: The GCfunc is new (marked white). */
@@ -146,7 +161,8 @@ GCfunc *lj_func_newL_empty(lua_State *L, GCproto *pt, GCtab *env)
     GCupval *uv = func_emptyuv(L);
     int32_t v = proto_uv(pt)[i];
     uv->immutable = ((v / PROTO_UV_IMMUTABLE) & 1);
-    uv->dhash = (uint32_t)(uintptr_t)pt ^ (v << 24);
+    if (v == PROTO_UV_PATTERN) settabV(L, uvval(uv), helpers);
+    uv->dhash = (uint32_t)(uintptr_t)pt ^ ((uint32_t)v << 24);
     setgcref(fn->l.uvptr[i], obj2gco(uv));
   }
   fn->l.nupvalues = (uint8_t)nuv;
@@ -158,9 +174,11 @@ GCfunc *lj_func_newL_gc(lua_State *L, GCproto *pt, GCfuncL *parent)
 {
   GCfunc *fn;
   GCRef *puv;
+  GCtab *helpers;
   MSize i, nuv;
   TValue *base;
   lj_gc_check_fixtop(L);
+  helpers = func_pattern_helpers(L, pt);
   fn = func_newL(L, pt, tabref(parent->env));
   /* NOBARRIER: The GCfunc is new (marked white). */
   puv = parent->uvptr;
@@ -169,7 +187,12 @@ GCfunc *lj_func_newL_gc(lua_State *L, GCproto *pt, GCfuncL *parent)
   for (i = 0; i < nuv; i++) {
     uint32_t v = proto_uv(pt)[i];
     GCupval *uv;
-    if ((v & PROTO_UV_LOCAL)) {
+    if (v == PROTO_UV_PATTERN) {
+      uv = func_emptyuv(L);
+      uv->immutable = 1;
+      uv->dhash = (uint32_t)(uintptr_t)pt ^ (v << 24);
+      settabV(L, uvval(uv), helpers);
+    } else if ((v & PROTO_UV_LOCAL)) {
       uv = func_finduv(L, base + (v & 0xff));
       uv->immutable = ((v / PROTO_UV_IMMUTABLE) & 1);
       uv->dhash = (uint32_t)(uintptr_t)mref(parent->pc, char) ^ (v << 24);
@@ -188,4 +211,3 @@ void LJ_FASTCALL lj_func_free(global_State *g, GCfunc *fn)
 			       sizeCfunc((MSize)fn->c.nupvalues);
   lj_mem_free(g, fn, size);
 }
-

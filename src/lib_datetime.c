@@ -30,7 +30,6 @@
 
 /* ------------------------------------------------------------------------ */
 
-#define LJLIB_MODULE_datetime
 
 /***
 UTC-only, proleptic-Gregorian date and time values.
@@ -386,7 +385,7 @@ Test whether a year is Gregorian leap year.
 @param year integer from 0 through 9999
 @return boolean
 */
-LJLIB_CF(datetime_is_leap_year)
+static int lj_cf_datetime_is_leap_year(lua_State *L)
 {
   int year = datetime_check_int(L, 1, 0, 9999, "year");
   lua_pushboolean(L, datetime_is_leap_year(year));
@@ -403,7 +402,7 @@ out-of-range fields raise ordinary Lua argument errors.
 @param day day of the month
 @return date table, or nil and an explanation
 */
-LJLIB_CF(datetime_date)
+static int lj_cf_datetime_date(lua_State *L)
 {
   DateTimeFields fields;
 
@@ -425,7 +424,7 @@ Construct a validated time of day.
 @param[opt] microsecond integer from 0 through 999999, defaulting to zero
 @return time table with hour, minute, second, and microsecond fields
 */
-LJLIB_CF(datetime_time)
+static int lj_cf_datetime_time(lua_State *L)
 {
   DateTimeFields fields;
 
@@ -450,7 +449,7 @@ Construct a validated timezone-free datetime value.
 @param[opt] microsecond integer from 0 through 999999, defaulting to zero
 @return naive datetime table, or nil and an explanation for an invalid date
 */
-LJLIB_CF(datetime_naive)
+static int lj_cf_datetime_naive(lua_State *L)
 {
   DateTimeFields fields;
 
@@ -477,7 +476,7 @@ provided.
 @param[opt] zone `"Etc/UTC"`
 @return UTC datetime table, or nil and an explanation
 */
-LJLIB_CF(datetime_from_naive)
+static int lj_cf_datetime_from_naive(lua_State *L)
 {
   DateTimeFields fields = datetime_check_fields(L, 1, 1);
 
@@ -495,7 +494,7 @@ Convert Unix seconds and an optional microsecond fraction to UTC.
 @param[opt] zone `"Etc/UTC"`
 @return UTC datetime table, or nil and an explanation
 */
-LJLIB_CF(datetime_from_unix)
+static int lj_cf_datetime_from_unix(lua_State *L)
 {
   DateTimeFields fields;
   int64_t seconds = datetime_check_seconds(L, 1, "seconds");
@@ -515,7 +514,7 @@ Read the current UTC wall clock.
 @function datetime.utc_now
 @return UTC datetime table with microsecond resolution where the platform provides it
 */
-LJLIB_CF(datetime_utc_now)
+static int lj_cf_datetime_utc_now(lua_State *L)
 {
   DateTimeFields fields;
   int64_t seconds;
@@ -534,7 +533,7 @@ Convert a datetime table to Unix seconds and microseconds.
 @param value UTC or equivalent datetime table
 @return integral seconds, microsecond fraction
 */
-LJLIB_CF(datetime_to_unix)
+static int lj_cf_datetime_to_unix(lua_State *L)
 {
   DateTimeFields fields = datetime_check_fields(L, 1, 1);
   int64_t seconds;
@@ -553,7 +552,7 @@ Add calendar days to a date without using the host local timezone.
 @param days integral calendar-day delta
 @return date table, or nil and an explanation when outside the supported range
 */
-LJLIB_CF(datetime_date_add)
+static int lj_cf_datetime_date_add(lua_State *L)
 {
   DateTimeFields fields = datetime_check_fields(L, 1, 0);
   int64_t days = datetime_days_from_civil(fields.year, fields.month, fields.day);
@@ -573,7 +572,7 @@ Measure the signed calendar-day difference between two dates.
 @param right date table
 @return signed number of days from right to left
 */
-LJLIB_CF(datetime_date_diff)
+static int lj_cf_datetime_date_diff(lua_State *L)
 {
   DateTimeFields left = datetime_check_fields(L, 1, 0);
   DateTimeFields right = datetime_check_fields(L, 2, 0);
@@ -591,7 +590,7 @@ Add integral seconds to a UTC datetime.
 @param seconds signed integral second delta
 @return UTC datetime table, or nil and an explanation when outside the supported range
 */
-LJLIB_CF(datetime_add)
+static int lj_cf_datetime_add(lua_State *L)
 {
   DateTimeFields fields = datetime_check_fields(L, 1, 1);
   int64_t seconds;
@@ -611,7 +610,7 @@ Measure the normalized difference between two datetimes.
 @param right datetime table
 @return signed seconds, non-negative microsecond remainder
 */
-LJLIB_CF(datetime_diff)
+static int lj_cf_datetime_diff(lua_State *L)
 {
   DateTimeFields left = datetime_check_fields(L, 1, 1);
   DateTimeFields right = datetime_check_fields(L, 2, 1);
@@ -640,7 +639,7 @@ Order two datetime values by instant.
 @param right datetime table
 @return -1, 0, or 1
 */
-LJLIB_CF(datetime_compare)
+static int lj_cf_datetime_compare(lua_State *L)
 {
   DateTimeFields left = datetime_check_fields(L, 1, 1);
   DateTimeFields right = datetime_check_fields(L, 2, 1);
@@ -663,7 +662,7 @@ Return the ISO weekday for a date.
 @param date validated date table
 @return integer from 1 for Monday through 7 for Sunday
 */
-LJLIB_CF(datetime_day_of_week)
+static int lj_cf_datetime_day_of_week(lua_State *L)
 {
   DateTimeFields fields = datetime_check_fields(L, 1, 0);
   int64_t days = datetime_days_from_civil(fields.year, fields.month, fields.day);
@@ -680,7 +679,7 @@ Parse a strict UTC ISO-8601 datetime ending in `Z`.
 @param text ISO-8601 UTC text with up to six fractional digits
 @return UTC datetime table, or nil and an explanation
 */
-LJLIB_CF(datetime_from_iso8601)
+static int lj_cf_datetime_from_iso8601(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   DateTimeFields fields;
@@ -697,7 +696,7 @@ Format a datetime as a strict UTC ISO-8601 string ending in `Z`.
 @param value UTC or equivalent datetime table
 @return ISO-8601 UTC string
 */
-LJLIB_CF(datetime_to_iso8601)
+static int lj_cf_datetime_to_iso8601(lua_State *L)
 {
   DateTimeFields fields = datetime_check_fields(L, 1, 1);
   SBuf *out = lj_buf_tmp_(L);
@@ -732,7 +731,7 @@ rather than silently consulting the host local timezone.
 @param zone `"Etc/UTC"` or a future timezone name
 @return UTC datetime table, or nil and an explanation
 */
-LJLIB_CF(datetime_shift_zone)
+static int lj_cf_datetime_shift_zone(lua_State *L)
 {
   DateTimeFields fields = datetime_check_fields(L, 1, 1);
 
@@ -744,10 +743,30 @@ LJLIB_CF(datetime_shift_zone)
 
 /* ------------------------------------------------------------------------ */
 
-#include "lj_libdef.h"
+/* These extensions use ordinary C functions, without fast-function IDs. */
+static const luaL_Reg datetime_funcs[] = {
+  {"is_leap_year", lj_cf_datetime_is_leap_year},
+  {"date", lj_cf_datetime_date},
+  {"time", lj_cf_datetime_time},
+  {"naive", lj_cf_datetime_naive},
+  {"from_naive", lj_cf_datetime_from_naive},
+  {"from_unix", lj_cf_datetime_from_unix},
+  {"utc_now", lj_cf_datetime_utc_now},
+  {"to_unix", lj_cf_datetime_to_unix},
+  {"date_add", lj_cf_datetime_date_add},
+  {"date_diff", lj_cf_datetime_date_diff},
+  {"add", lj_cf_datetime_add},
+  {"diff", lj_cf_datetime_diff},
+  {"compare", lj_cf_datetime_compare},
+  {"day_of_week", lj_cf_datetime_day_of_week},
+  {"from_iso8601", lj_cf_datetime_from_iso8601},
+  {"to_iso8601", lj_cf_datetime_to_iso8601},
+  {"shift_zone", lj_cf_datetime_shift_zone},
+  {NULL, NULL}
+};
 
 LUALIB_API int luaopen_datetime(lua_State *L)
 {
-  LJ_LIB_REG(L, LUA_DATETIMELIBNAME, datetime);
+  luaL_register(L, LUA_DATETIMELIBNAME, datetime_funcs);
   return 1;
 }

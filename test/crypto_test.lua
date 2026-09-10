@@ -19,6 +19,6 @@ test.describe("crypto module", function()
 
   test.it("calculates an HMAC without changing its binary result", function(t)
     t.equal(encoding.hex_encode(crypto.hmac("sha256", "key", "data")),
-      "5031fe3d989c6d1537a013fa6e739da23463fd6e6cc8da4f1d9e65f2c1d74e31")
+      "5031fe3d989c6d1537a013fa6e739da23463fdaec3b70137d828e36ace221bd0")
   end)
 end)

@@ -15,4 +15,13 @@ typedef enum {
   FF__MAX
 } FastFunc;
 
+/* Indices into the existing assembly fast-function bytecode table. */
+typedef enum {
+#define FFDEF(name)
+#define FFASMDEF(name, index)	FFASM_##name = index,
+#include "lj_ffdef.h"
+#undef FFASMDEF
+  FFASM__MAX
+} FastFuncASM;
+
 #endif

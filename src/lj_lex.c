@@ -451,12 +451,15 @@ int lj_lex_setup(lua_State *L, LexState *ls)
   ls->vtop = 0;
   ls->bcstack = NULL;
   ls->sizebcstack = 0;
+  ls->ahead = NULL;
+  ls->sizeahead = ls->aheadpos = ls->aheadlen = 0;
   ls->tok = 0;
   ls->lookahead = TK_eof;  /* No look-ahead token. */
   ls->linenumber = 1;
   ls->lastline = 1;
   ls->endmark = 0;
   ls->fr2 = LJ_FR2;  /* Generate native bytecode by default. */
+  ls->bcversion = 0;
   lex_next(ls);  /* Read-ahead first char. */
   if (ls->c == 0xef && ls->p + 2 <= ls->pe && (uint8_t)ls->p[0] == 0xbb &&
       (uint8_t)ls->p[1] == 0xbf) {  /* Skip UTF-8 BOM (if buffered). */
@@ -494,7 +497,23 @@ void lj_lex_cleanup(lua_State *L, LexState *ls)
   global_State *g = G(L);
   lj_mem_freevec(g, ls->bcstack, ls->sizebcstack, BCInsLine);
   lj_mem_freevec(g, ls->vstack, ls->sizevstack, VarInfo);
+  lj_mem_freevec(g, ls->ahead, ls->sizeahead, LexAhead);
   lj_buf_free(g, &ls->sb);
+  lj_buf_free(g, &ls->binfmt);
+}
+
+/* Read a token, replaying extended lookahead before scanning more input. */
+static LexToken lex_read(LexState *ls, TValue *val)
+{
+  if (ls->aheadpos < ls->aheadlen) {
+    LexAhead *a = &ls->ahead[ls->aheadpos++];
+    *val = a->val;
+    ls->linenumber = a->line;
+    return a->tok;
+  }
+  ls->aheadpos = ls->aheadlen = 0;
+  setnilV(val);
+  return lex_scan(ls, val);
 }
 
 /* Return next lexical token. */
@@ -502,7 +521,7 @@ void lj_lex_next(LexState *ls)
 {
   ls->lastline = ls->linenumber;
   if (LJ_LIKELY(ls->lookahead == TK_eof)) {  /* No lookahead token? */
-    ls->tok = lex_scan(ls, &ls->tokval);  /* Get next token. */
+    ls->tok = lex_read(ls, &ls->tokval);  /* Get next token. */
   } else {  /* Otherwise return lookahead token. */
     ls->tok = ls->lookahead;
     ls->lookahead = TK_eof;
@@ -513,9 +532,41 @@ void lj_lex_next(LexState *ls)
 /* Look ahead for the next token. */
 LexToken lj_lex_lookahead(LexState *ls)
 {
-  lj_assertLS(ls->lookahead == TK_eof, "double lookahead");
-  ls->lookahead = lex_scan(ls, &ls->lookaheadval);
+  if (ls->lookahead == TK_eof)
+    ls->lookahead = lex_read(ls, &ls->lookaheadval);
   return ls->lookahead;
+}
+
+/* Peek n tokens ahead without changing the parser's current token/line. */
+LexToken lj_lex_peek(LexState *ls, MSize n, TValue *val)
+{
+  BCLine line;
+  MSize index;
+  lj_assertLS(n > 0, "bad lookahead index");
+  lj_lex_lookahead(ls);
+  lj_parse_keepahead(ls, &ls->lookaheadval);
+  if (n == 1) {
+    if (val) *val = ls->lookaheadval;
+    return ls->lookahead;
+  }
+  index = ls->aheadpos+n-2;
+  line = ls->linenumber;
+  if (ls->aheadlen == ls->aheadpos) ls->aheadline = line;
+  ls->linenumber = ls->aheadline;
+  while (index >= ls->aheadlen) {
+    LexAhead *a;
+    if (ls->aheadlen >= ls->sizeahead)
+      lj_mem_growvec(ls->L, ls->ahead, ls->sizeahead, LJ_MAX_BCINS, LexAhead);
+    a = &ls->ahead[ls->aheadlen++];
+    setnilV(&a->val);
+    a->tok = lex_scan(ls, &a->val);
+    a->line = ls->linenumber;
+    lj_parse_keepahead(ls, &a->val);
+  }
+  ls->aheadline = ls->linenumber;
+  ls->linenumber = line;
+  if (val) *val = ls->ahead[index].val;
+  return ls->ahead[index].tok;
 }
 
 /* Convert token to string. */

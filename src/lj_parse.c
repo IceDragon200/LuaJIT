@@ -129,7 +129,7 @@ typedef struct FuncScope {
 
 /* Index into variable stack. See VarIndex in lj_lex.h. */
 #define VINDEX_NONE		0xffff
-#define LJ_MAX_VSTACK		(65536 - LJ_MAX_UPVAL)
+#define LJ_MAX_VSTACK		(65535 - LJ_MAX_UPVAL)  /* Reserve VINDEX_NONE. */
 
 #define LJ_HASH_VSTACK		0x20	/* Must be a power of 2. */
 
@@ -138,6 +138,7 @@ typedef struct FuncScope {
 #define VSTACK_GOTO		0x02	/* Pending goto. */
 #define VSTACK_LABEL		0x04	/* Label. */
 #define VSTACK_CONST		0x08	/* Constant variable. */
+#define VSTACK_EXPTEMP		0x10	/* Internal expression slot. */
 
 /* Per-function state. */
 typedef struct FuncState {
@@ -151,6 +152,7 @@ typedef struct FuncState {
   BCPos jpc;			/* Pending jump list to next bytecode. */
   BCReg freereg;		/* First free register. */
   BCReg nactvar;		/* Number of active local variables. */
+  BCReg nexptemp;		/* Expression temporaries pinned as internal locals. */
   BCReg nkn, nkgc;		/* Number of lua_Number/GCobj constants */
   BCLine linedefined;		/* First line of the function definition. */
   BCInsLine *bcbase;		/* Base of bytecode stack. */
@@ -162,7 +164,9 @@ typedef struct FuncState {
   uint8_t nuv;			/* Number of upvalues */
   uint8_t tryreturn;		/* Return statements use the try relay protocol. */
   uint8_t tryblock;		/* This function is the body of a try statement. */
-  VarIndex varmap[LJ_MAX_LOCVAR];  /* Map from register to variable idx. */
+  uint8_t patternuv;		/* Private helper upvalue, or NO_REG. */
+  VarIndex vfirst, vlast;	/* Locals in activation order. */
+  VarIndex varmap[LJ_MAX_SLOTS];  /* Map from register to variable idx. */
   VarIndex uvmap[LJ_MAX_UPVAL];	/* Map from upvalue to variable idx. */
   VarIndex uvtmp[LJ_MAX_UPVAL];	/* Temporary upvalue map. */
 } FuncState;
@@ -268,6 +272,19 @@ GCstr *lj_parse_keepstr(LexState *ls, const char *str, size_t len)
   if (tvisnil(tv)) setboolV(tv, 1);
   lj_gc_check(L);
   return s;
+}
+
+/* Lookahead may outlive the current child prototype. Anchor its GC values
+** in the outermost parser constants table until the chunk is complete. */
+void lj_parse_keepahead(LexState *ls, TValue *tv)
+{
+  if (tvisgcv(tv)) {
+    FuncState *fs = ls->fs;
+    TValue *anchor;
+    while (fs->prev) fs = fs->prev;
+    anchor = lj_tab_set(ls->L, fs->kt, tv);
+    if (tvisnil(anchor)) setboolV(anchor, 1);
+  }
 }
 
 #if LJ_HASFFI
@@ -1135,7 +1152,7 @@ static LJ_AINLINE VarHash var_hash(GCstr *name)
 }
 
 /* Define a new local variable. */
-static MSize var_new(LexState *ls, BCReg n, GCstr *name)
+static MSize var_new_(LexState *ls, BCReg n, GCstr *name, int temporary)
 {
   FuncState *fs = ls->fs;
   MSize vtop = ls->vtop;
@@ -1148,7 +1165,9 @@ static MSize var_new(LexState *ls, BCReg n, GCstr *name)
       vidx = v->prev;
     }
   }
-  checklimit(fs, fs->nactvar+n, LJ_MAX_LOCVAR, "local variables");
+  if (!temporary)
+    checklimit(fs, fs->nactvar+n-fs->nexptemp, LJ_MAX_LOCVAR, "local variables");
+  checklimit(fs, fs->nactvar+n, LJ_MAX_SLOTS, "register slots");
   if (LJ_UNLIKELY(vtop >= ls->sizevstack)) {
     if (ls->sizevstack >= LJ_MAX_VSTACK)
       lj_lex_error(ls, 0, LJ_ERR_XLIMC, LJ_MAX_VSTACK);
@@ -1159,12 +1178,17 @@ static MSize var_new(LexState *ls, BCReg n, GCstr *name)
 	      "unanchored variable name");
   /* NOBARRIER: name is anchored in fs->kt and ls->vstack is not a GCobj. */
   setgcref(ls->vstack[vtop].name, obj2gco(name));
-  ls->vstack[vtop].info = 0;
+  ls->vstack[vtop].info = temporary ? VSTACK_EXPTEMP : 0;
   /* The other VarInfo fields are filled in by var_add and var_remove. */
   fs->varmap[fs->nactvar+n] = (uint16_t)vtop;
   ls->vtop = vtop+1;
   return vtop;
 }
+
+#define var_new(ls, n, name)	var_new_((ls), (n), (name), 0)
+
+#define var_new_temp(ls, n, v) \
+  var_new_((ls), (n), lj_parse_keepstr(ls, "" v, sizeof(v)-1), 1)
 
 #define var_new_lit(ls, n, v) \
   var_new(ls, (n), lj_parse_keepstr(ls, "" v, sizeof(v)-1))
@@ -1183,6 +1207,13 @@ static void var_add(LexState *ls, BCReg nvars)
     VarHash hash = var_hash(strref(v->name));
     v->startpc = fs->pc;
     v->slot = nactvar++;
+    v->next = VINDEX_NONE;
+    if (fs->vlast != VINDEX_NONE)
+      ls->vstack[fs->vlast].next = (VarIndex)vidx;
+    else
+      fs->vfirst = (VarIndex)vidx;
+    fs->vlast = (VarIndex)vidx;
+    if (v->info & VSTACK_EXPTEMP) fs->nexptemp++;
     if (hash != -1) {
       v->prev = ls->vhash[hash];
       ls->vhash[hash] = vidx;
@@ -1199,6 +1230,7 @@ static void var_remove(LexState *ls, BCReg tolevel)
     VarInfo *v = &var_get(ls, fs, --fs->nactvar);
     VarHash hash = var_hash(strref(v->name));
     v->endpc = fs->pc;
+    if (v->info & VSTACK_EXPTEMP) fs->nexptemp--;
     if (hash != -1) {
       ls->vhash[hash] = v->prev;
     }
@@ -1489,7 +1521,9 @@ static void fs_fixup_uv2(FuncState *fs, GCproto *pt)
   MSize i, n = pt->sizeuv;
   for (i = 0; i < n; i++) {
     VarIndex vidx = uv[i];
-    if (vidx >= LJ_MAX_VSTACK)
+    if (vidx == VINDEX_NONE)
+      uv[i] = PROTO_UV_PATTERN;
+    else if (vidx >= LJ_MAX_VSTACK)
       uv[i] = vidx - LJ_MAX_VSTACK;
     else if ((vstack[vidx].info & VSTACK_VAR_RW))
       uv[i] = vstack[vidx].slot | PROTO_UV_LOCAL;
@@ -1603,40 +1637,48 @@ static void fs_fixup_line(FuncState *fs, GCproto *pt,
 /* Prepare variable info for prototype. */
 static size_t fs_prep_var(LexState *ls, FuncState *fs, size_t *ofsvar)
 {
-  VarInfo *vs = ls->vstack, *ve;
+  VarInfo *vs = ls->vstack;
   MSize i, n;
   BCPos lastpc;
   lj_buf_reset(&ls->sb);  /* Copy to temp. string buffer. */
   /* Store upvalue names. */
   for (i = 0, n = fs->nuv; i < n; i++) {
-    GCstr *s = strref(vs[fs->uvmap[i]].name);
-    MSize len = s->len+1;
-    char *p = lj_buf_more(&ls->sb, len);
+    GCstr *s;
+    MSize len;
+    char *p;
+    if (fs->uvmap[i] == VINDEX_NONE) {
+      lj_buf_putmem(&ls->sb, "(pattern helpers)", sizeof("(pattern helpers)"));
+      continue;
+    }
+    s = strref(vs[fs->uvmap[i]].name);
+    len = s->len+1;
+    p = lj_buf_more(&ls->sb, len);
     p = lj_buf_wmem(p, strdata(s), len);
     ls->sb.w = p;
   }
   *ofsvar = sbuflen(&ls->sb);
   lastpc = 0;
-  /* Store local variable names and compressed ranges. */
-  for (ve = vs + ls->vtop, vs += fs->vbase; vs < ve; vs++) {
-    if (!gola_isgotolabel(vs)) {
-      GCstr *s = strref(vs->name);
-      BCPos startpc;
-      char *p;
-      if ((uintptr_t)s < VARNAME__MAX) {
-	p = lj_buf_more(&ls->sb, 1 + 2*5);
-	*p++ = (char)(uintptr_t)s;
-      } else {
-	MSize len = s->len+1;
-	p = lj_buf_more(&ls->sb, len + 2*5);
-	p = lj_buf_wmem(p, strdata(s), len);
-      }
-      startpc = vs->startpc;
-      p = lj_strfmt_wuleb128(p, startpc-lastpc);
-      p = lj_strfmt_wuleb128(p, vs->endpc-startpc);
-      ls->sb.w = p;
-      lastpc = startpc;
+  /* Pending declarations may activate after locals inside their RHS case.
+  ** Debug names must follow activation order, not declaration order. */
+  for (i = fs->vfirst; i != VINDEX_NONE; i = vs->next) {
+    GCstr *s;
+    BCPos startpc;
+    char *p;
+    vs = ls->vstack+i;
+    s = strref(vs->name);
+    if ((uintptr_t)s < VARNAME__MAX) {
+      p = lj_buf_more(&ls->sb, 1 + 2*5);
+      *p++ = (char)(uintptr_t)s;
+    } else {
+      MSize len = s->len+1;
+      p = lj_buf_more(&ls->sb, len + 2*5);
+      p = lj_buf_wmem(p, strdata(s), len);
     }
+    startpc = vs->startpc;
+    p = lj_strfmt_wuleb128(p, startpc-lastpc);
+    p = lj_strfmt_wuleb128(p, vs->endpc-startpc);
+    ls->sb.w = p;
+    lastpc = startpc;
   }
   lj_buf_putb(&ls->sb, '\0');  /* Terminator for varinfo. */
   return sbuflen(&ls->sb);
@@ -1763,9 +1805,12 @@ static void fs_init(LexState *ls, FuncState *fs)
   fs->nkgc = 0;
   fs->nkn = 0;
   fs->nactvar = 0;
+  fs->nexptemp = 0;
   fs->nuv = 0;
   fs->tryreturn = 0;
   fs->tryblock = 0;
+  fs->patternuv = NO_REG;
+  fs->vfirst = fs->vlast = VINDEX_NONE;
   fs->bl = NULL;
   fs->flags = 0;
   fs->framesize = 1;  /* Minimum frame size. */
@@ -1784,7 +1829,6 @@ static int parse_isbin_constructor(LexState *ls);
 static void parse_bin_constructor(LexState *ls, ExpDesc *e);
 static int parse_iscase(LexState *ls);
 static void parse_case_expr(LexState *ls, ExpDesc *e);
-static void parse_case_expr_to_reg(LexState *ls, ExpDesc *e, BCReg resultreg);
 
 /* Return string expression. */
 static void expr_str(LexState *ls, ExpDesc *e)
@@ -1823,6 +1867,26 @@ static void expr_index(FuncState *fs, ExpDesc *t, ExpDesc *e)
     }
   }
   t->u.s.aux = expr_toanyreg(fs, e);  /* 0..255: register */
+}
+
+/* Load a compiler helper through a closed upvalue, never the Lua environment. */
+static void expr_pattern_helper(LexState *ls, ExpDesc *fn, const char *name)
+{
+  FuncState *fs = ls->fs;
+  ExpDesc key;
+  if (fs->patternuv == NO_REG) {
+    BCReg uv = fs->nuv;
+    checklimit(fs, uv, LJ_MAX_UPVAL, "upvalues");
+    fs->patternuv = (uint8_t)uv;
+    fs->uvmap[uv] = fs->uvtmp[uv] = VINDEX_NONE;
+    fs->nuv++;
+  }
+  expr_init(fn, VUPVAL, fs->patternuv);
+  fn->u.s.aux = VINDEX_NONE;
+  expr_toanyreg(fs, fn);
+  expr_init(&key, VKSTR, 0);
+  key.u.sval = lj_parse_keepstr(ls, name, strlen(name));
+  expr_index(fs, fn, &key);
 }
 
 /* Parse index expression with named field. */
@@ -1966,6 +2030,7 @@ typedef struct PatternBindings {
   GCstr **pinnames;  /* Deferred pin names, used for function parameters. */
   BCReg nvars;
   BCReg npins;
+  uint8_t binint[LJ_MAX_LOCVAR];  /* Earlier scalar integer captures. */
 } PatternBindings;
 
 typedef struct ParamPatterns {
@@ -1994,6 +2059,8 @@ static BCReg emit_pattern_match(LexState *ls, const char *matcher_name,
 				GCstr *format, PatternBindings *binds,
 				ExpDesc *data);
 static void parse_param_patterns(LexState *ls, ParamPatterns *patterns);
+static void pattern_check_unique(LexState *ls, PatternBindings *binds,
+				 GCstr *name);
 
 /* Parse function parameters. */
 static BCReg parse_params(LexState *ls, int needself,
@@ -2030,6 +2097,7 @@ static BCReg parse_params(LexState *ls, int needself,
 	}
 	if (lex_opt(ls, '=')) {
 	  GCstr *alias = lex_str(ls);
+	  pattern_check_unique(ls, &binds, alias);
 	  setgcref(ls->vstack[paramvidx].name, obj2gco(alias));
 	}
 	setboolV(lj_tab_setstr(ls->L, fs->kt, format), 1);
@@ -2077,9 +2145,7 @@ static void emit_param_vararg_pack(LexState *ls, GCstr *name)
 
   if (name == NULL) return;
   var_new(ls, 0, name);
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = lj_parse_keepstr(ls, "__vararg_pack",
-			      sizeof("__vararg_pack")-1);
+  expr_pattern_helper(ls, &fn, "__vararg_pack");
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -2203,9 +2269,7 @@ static int parse_named_vararg_spread(LexState *ls, ExpDesc *v)
   if (ls->tok != TK_dots || !lex_isname(lj_lex_lookahead(ls))) return 0;
   lj_lex_next(ls);  /* Skip dots and advance to the packed table name. */
   var_lookup(ls, &packed, lex_str(ls));
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = lj_parse_keepstr(ls, "__vararg_unpack",
-			      sizeof("__vararg_unpack")-1);
+  expr_pattern_helper(ls, &fn, "__vararg_unpack");
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -2782,10 +2846,30 @@ static void parse_bin_prefix(LexState *ls)
   lj_lex_next(ls);
 }
 
+static GCstr *pattern_bound_name(LexState *ls, PatternBindings *binds, BCReg i)
+{
+  if (binds->names) return binds->names[i];
+  if (binds->vars) {
+    ExpDesc *e = &binds->vars[i];
+    return e->k == VGLOBAL ? e->u.sval : strref(ls->vstack[e->u.s.aux].name);
+  }
+  return strref(var_get(ls, ls->fs, ls->fs->nactvar+i).name);
+}
+
+static void pattern_check_unique(LexState *ls, PatternBindings *binds,
+				 GCstr *name)
+{
+  BCReg i;
+  for (i = 0; i < binds->nvars; i++)
+    if (pattern_bound_name(ls, binds, i) == name)
+      lj_lex_error(ls, 0, LJ_ERR_XPATDUP, strdata(name));
+}
+
 static void pattern_bind(LexState *ls, PatternBindings *binds, GCstr *name)
 {
   BCReg n = binds->nvars;
   checklimit(ls->fs, n, LJ_MAX_LOCVAR, "pattern bindings");
+  pattern_check_unique(ls, binds, name);
   if (binds->vars) {
     var_lookup(ls, &binds->vars[n], name);
     var_assign(ls, &binds->vars[n]);
@@ -3121,7 +3205,7 @@ static uint8_t parse_bin_qualifiers(LexState *ls, int allow_signed)
 
 /* Returns 1 when the decoder consumes the remaining input. */
 static int parse_bin_decoder(LexState *ls, SBuf *fmt, int mode, uint32_t pin,
-			     const TValue *literal)
+			     const TValue *literal, PatternBindings *binds)
 {
   GCstr *decoder = lex_str(ls);
   MSize start = sbuflen(fmt);
@@ -3152,9 +3236,24 @@ static int parse_bin_decoder(LexState *ls, SBuf *fmt, int mode, uint32_t pin,
   } else if (pattern_name_is(decoder, "bytes")) {
     if (mode == BINDEC_LITERAL) err_syntax(ls, LJ_ERR_XSYNTAX);
     if (lex_opt(ls, '(')) {
-      uint32_t size = parse_bin_size(ls);
+      uint32_t size;
+      int dependent = lex_isname(ls->tok);
+      if (dependent) {
+	GCstr *name = lex_str(ls);
+	for (size = 0; binds && size < binds->nvars; size++)
+	  if (pattern_bound_name(ls, binds, size) == name) break;
+	if (!binds || size == binds->nvars || !binds->binint[size])
+	  lj_lex_error(ls, 0, LJ_ERR_XPATSIZE, strdata(name));
+      } else {
+	size = parse_bin_size(ls);
+      }
       lex_check(ls, ')');
-      lj_buf_putb(fmt, mode == BINDEC_CAPTURE ? BINFMT_BYTES :
+
+      if (dependent)
+	lj_buf_putb(fmt, mode == BINDEC_CAPTURE ? BINFMT_BYTES_REF :
+		    mode == BINDEC_SKIP ? BINFMT_SKIP_BYTES_REF : BINFMT_PIN_BYTES_REF);
+      else
+	lj_buf_putb(fmt, mode == BINDEC_CAPTURE ? BINFMT_BYTES :
 		      mode == BINDEC_SKIP ? BINFMT_SKIP_BYTES : BINFMT_PIN_BYTES);
       binfmt_put_u32(fmt, size);
       if (mode == BINDEC_PIN) binfmt_put_u32(fmt, pin);
@@ -3373,8 +3472,7 @@ static void parse_scalar_pattern_assignment(LexState *ls)
   }
 
   matcher = lj_parse_keepstr(ls, "__value_match", sizeof("__value_match")-1);
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = matcher;
+  expr_pattern_helper(ls, &fn, strdata(matcher));
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -3396,6 +3494,7 @@ static void parse_table_pattern(LexState *ls, SBuf *fmt,
   scope.nkeys = 0;
   scope.npositions = 0;
 
+  synlevel_begin(ls);
   lex_check(ls, '{');
   while (ls->tok != '}') {
     if (ls->tok == TK_dots) {
@@ -3480,6 +3579,7 @@ static void parse_table_pattern(LexState *ls, SBuf *fmt,
   }
   lex_check(ls, '}');
   lj_buf_putb(fmt, TBLFMT_END);
+  synlevel_end(ls);
 }
 
 /* Place the matcher function before parsing/evaluating its input expression. */
@@ -3491,8 +3591,7 @@ static BCReg emit_pattern_match_begin(LexState *ls, const char *matcher_name)
   ExpDesc fn;
 
   matcher = lj_parse_keepstr(ls, matcher_name, strlen(matcher_name));
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = matcher;
+  expr_pattern_helper(ls, &fn, strdata(matcher));
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);  /* Match the normal call parser. */
@@ -3605,7 +3704,7 @@ static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds)
       int is_rest;
       parse_bin_number_literal(ls, &literal);
       lex_check(ls, '<');
-      is_rest = parse_bin_decoder(ls, fmt, BINDEC_LITERAL, 0, &literal);
+      is_rest = parse_bin_decoder(ls, fmt, BINDEC_LITERAL, 0, &literal, binds);
       lex_check(ls, '>');
       if (is_rest && ls->tok != '}') err_syntax(ls, LJ_ERR_XSYNTAX);
     } else if (ls->tok == '^') {
@@ -3613,7 +3712,7 @@ static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds)
       int is_rest;
       if (ls->tok == '<') {
 	lex_check(ls, '<');
-	is_rest = parse_bin_decoder(ls, fmt, BINDEC_PIN, pin, NULL);
+	is_rest = parse_bin_decoder(ls, fmt, BINDEC_PIN, pin, NULL, binds);
 	lex_check(ls, '>');
 	if (is_rest && ls->tok != '}') err_syntax(ls, LJ_ERR_XSYNTAX);
       } else {
@@ -3624,11 +3723,15 @@ static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds)
       GCstr *binder = lex_str(ls);
       int is_rest;
       int capture = !pattern_is_wildcard(binder);
+      MSize start = sbuflen(fmt);
       lex_check(ls, '<');
       is_rest = parse_bin_decoder(ls, fmt,
-				 capture ? BINDEC_CAPTURE : BINDEC_SKIP, 0, NULL);
+				 capture ? BINDEC_CAPTURE : BINDEC_SKIP, 0, NULL, binds);
       lex_check(ls, '>');
-      if (capture) pattern_bind(ls, binds, binder);
+      if (capture) {
+	pattern_bind(ls, binds, binder);
+	binds->binint[binds->nvars-1] = (uint8_t)fmt->b[start] == BINFMT_INT;
+      }
       if (is_rest && ls->tok != '}')
 	err_syntax(ls, LJ_ERR_XSYNTAX);
     }
@@ -3642,23 +3745,28 @@ static GCstr *parse_bin_pattern(LexState *ls, PatternBindings *binds)
 static void parse_bin_constructor(LexState *ls, ExpDesc *e)
 {
   FuncState *fs = ls->fs;
-  SBuf *fmt = lj_buf_tmp_(ls->L);
+  SBuf *fmt = &ls->binfmt;
+  MSize fmtstart = sbuflen(fmt);
   GCstr *builder;
   ExpDesc fn, value, format;
   BCReg base;
   BCReg nvalues = 0;
   BCReg formatreg;
+  BCPos formatpc;
   BCIns ins;
 
   parse_bin_prefix(ls);  /* Skip @b. */
   builder = lj_parse_keepstr(ls, "__bin_build", sizeof("__bin_build")-1);
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = builder;
+  expr_pattern_helper(ls, &fn, strdata(builder));
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
   formatreg = fs->freereg;
-  bcreg_reserve(fs, 1);  /* Filled after the descriptor has been parsed. */
+  bcreg_reserve(fs, 1);
+  /* Initialize the format argument before any value arguments. Leaving a
+  ** second gap beside the frame slot can resurrect stale JIT frame refs.
+  ** Patch the constant after parsing, without changing instruction order. */
+  formatpc = bcemit_AD(fs, BC_KSTR, formatreg, 0);
 
   lex_check(ls, '{');
   while (ls->tok != '}') {
@@ -3677,15 +3785,17 @@ static void parse_bin_constructor(LexState *ls, ExpDesc *e)
       nvalues++;
       lex_check(ls, '<');
       // Ignoring the is_rest here, as that is a valid construct
-      parse_bin_decoder(ls, fmt, BINDEC_CAPTURE, 0, NULL);
+      parse_bin_decoder(ls, fmt, BINDEC_CAPTURE, 0, NULL, NULL);
       lex_check(ls, '>');
     }
     if (!lex_opt(ls, ',') && !lex_opt(ls, ';')) break;
   }
   lex_check(ls, '}');
   expr_init(&format, VKSTR, 0);
-  format.u.sval = lj_parse_keepstr(ls, fmt->b, sbuflen(fmt));
-  expr_toreg(fs, &format, formatreg);
+  format.u.sval = lj_parse_keepstr(ls, fmt->b ? fmt->b+fmtstart : "",
+				 sbuflen(fmt)-fmtstart);
+  fmt->w = fmt->b ? fmt->b+fmtstart : NULL;
+  setbc_d(&fs->bcbase[formatpc].ins, const_str(fs, &format));
   ins = BCINS_ABC(BC_CALL, base, 2, fs->freereg-base-ls->fr2);
   expr_init(e, VCALL, bcemit_INS(fs, ins));
   e->u.s.aux = base;
@@ -3779,33 +3889,6 @@ static void parse_local(LexState *ls, int vinfo)
       } while (lex_opt(ls, ','));
     }
     if (lex_opt(ls, '=')) {  /* Optional RHS. */
-      if (!vinfo && parse_iscase(ls)) {
-	FuncState *fs = ls->fs;
-	VarIndex vhsave[LJ_VINDEX_HSIZE];
-	BCReg base = fs->nactvar;
-	BCReg i;
-
-	/*
-	** Case needs hidden locals for its subject and clause bindings. Make
-	** the pending declaration occupy its final registers first, while
-	** keeping its names out of scope for the RHS as Lua requires.
-	*/
-	memcpy(vhsave, ls->vhash, sizeof(vhsave));
-	var_add(ls, nvars);
-	bcreg_reserve(fs, nvars);
-	memcpy(ls->vhash, vhsave, sizeof(vhsave));
-	parse_case_expr_to_reg(ls, &e, base);
-	if (nvars > 1) bcemit_nil(fs, base+1, nvars-1);
-	for (i = 0; i < nvars; i++) {
-	  VarIndex vidx = fs->varmap[base+i];
-	  VarInfo *v = &ls->vstack[vidx];
-	  VarHash hash = var_hash(strref(v->name));
-	  v->prev = ls->vhash[hash];
-	  ls->vhash[hash] = vidx;
-	  v->startpc = fs->pc;
-	}
-	return;
-      }
       nexps = expr_list(ls, &e);
     } else {  /* Or implicitly set to nil. */
       e.k = VVOID;
@@ -3859,8 +3942,7 @@ static void parse_try_return(LexState *ls, int eflags)
   BCReg base;
   BCIns ins;
 
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = lj_parse_keepstr(ls, "__try_return", sizeof("__try_return")-1);
+  expr_pattern_helper(ls, &fn, "__try_return");
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -4275,19 +4357,27 @@ static BCPos emit_case_literal_test(LexState *ls, BCReg subject)
   return value.f;
 }
 
-/* A scalar ^name is just an ordinary equality test against an outer value. */
+/* Scalar pins use the same raw equality as table pins and strict matches. */
 static BCPos emit_case_pin_test(LexState *ls, BCReg subject)
 {
   FuncState *fs = ls->fs;
-  ExpDesc value, expected;
+  ExpDesc fn, value, expected;
+  BCReg base;
   GCstr *name;
 
   lex_check(ls, '^');
   name = lex_str(ls);
   var_lookup(ls, &expected, name);
+  expr_pattern_helper(ls, &fn, "rawequal");
+  expr_tonextreg(fs, &fn);
+  base = fn.u.s.info;
+  if (ls->fr2) bcreg_reserve(fs, 1);
   expr_init(&value, VNONRELOC, subject);
-  bcemit_binop_left(fs, OPR_EQ, &value);
-  bcemit_binop(fs, OPR_EQ, &value, &expected);
+  expr_tonextreg(fs, &value);
+  expr_tonextreg(fs, &expected);
+  bcemit_ABC(fs, BC_CALL, base, 2, 3);
+  fs->freereg = base+1;
+  expr_init(&value, VNONRELOC, base);
   bcemit_branch_t(fs, &value);
   return value.f;
 }
@@ -4301,8 +4391,7 @@ static void emit_case_clause_error(LexState *ls, BCReg subject)
   BCReg base;
 
   matcher = lj_parse_keepstr(ls, "__case_clause", sizeof("__case_clause")-1);
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = matcher;
+  expr_pattern_helper(ls, &fn, strdata(matcher));
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -4325,9 +4414,9 @@ static BCPos emit_case_match_test(LexState *ls, BCReg subject,
   BCIns ins;
 
   bcreg_reserve(fs, binds->nvars);  /* Branch-local binding slots. */
+  if (binds->nvars) bcemit_nil(fs, bindbase, binds->nvars);
   matcher = lj_parse_keepstr(ls, matcher_name, strlen(matcher_name));
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = matcher;
+  expr_pattern_helper(ls, &fn, strdata(matcher));
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -4421,7 +4510,7 @@ static void parse_case(LexState *ls, BCLine line)
   lj_lex_next(ls);  /* Skip contextual 'case'. */
   fscope_begin(fs, &bl, FSCOPE_CASE);
   subjectreg = fs->nactvar;
-  var_new_lit(ls, 0, "(case subject)");
+  var_new_temp(ls, 0, "(case subject)");
   bcreg_reserve(fs, 1);
   expr(ls, &subject, 0);
   expr_toreg(fs, &subject, subjectreg);
@@ -4505,16 +4594,17 @@ static void parse_case_expr_to_reg(LexState *ls, ExpDesc *e, BCReg resultreg)
   /* Keep a standalone result alive after the case scope ends. */
   if (resultreg == NO_REG) {
     resultreg = fs->nactvar;
-    var_new_lit(ls, 0, "(case result)");
+    var_new_temp(ls, 0, "(case result)");
     bcreg_reserve(fs, 1);
     var_add(ls, 1);
     fs->freereg = fs->nactvar;
+    bcemit_nil(fs, resultreg, 1);
   }
 
   lj_lex_next(ls);  /* Skip contextual 'case'. */
   fscope_begin(fs, &bl, FSCOPE_CASE);
   subjectreg = fs->nactvar;
-  var_new_lit(ls, 0, "(case subject)");
+  var_new_temp(ls, 0, "(case subject)");
   bcreg_reserve(fs, 1);
   expr(ls, &subject, 0);
   expr_toreg(fs, &subject, subjectreg);
@@ -4548,7 +4638,27 @@ static void parse_case_expr_to_reg(LexState *ls, ExpDesc *e, BCReg resultreg)
 
 static void parse_case_expr(LexState *ls, ExpDesc *e)
 {
+  FuncState *fs = ls->fs;
+  BCReg nactvar = fs->nactvar, freereg = fs->freereg;
+  BCReg nexptemp = fs->nexptemp, i;
+  VarIndex pending[LJ_MAX_SLOTS];
+
+  /* A local declaration may already have filled varmap above nactvar.
+  ** Preserve it while clause locals temporarily occupy those registers.
+  ** Pin live expression temporaries without emitting moves or a closure. */
+  memcpy(pending, fs->varmap+nactvar,
+	 (LJ_MAX_SLOTS-nactvar)*sizeof(VarIndex));
+  for (i = 0; i < freereg-nactvar; i++) {
+    var_new_temp(ls, i, "(case temporary)");
+  }
+  var_add(ls, freereg-nactvar);
   parse_case_expr_to_reg(ls, e, NO_REG);
+  var_remove(ls, nactvar);
+  memcpy(fs->varmap+nactvar, pending,
+	 (LJ_MAX_SLOTS-nactvar)*sizeof(VarIndex));
+  lj_assertFS(fs->nexptemp == nexptemp, "unbalanced case temporaries");
+  UNUSED(nexptemp);
+  fs->freereg = freereg+1;  /* Keep exactly one result above the saved temps. */
 }
 
 /* `try` remains a soft keyword: only `try do` starts the statement. */
@@ -4600,8 +4710,7 @@ static BCReg emit_try_pcall(LexState *ls, ExpDesc *protected)
   ExpDesc fn;
   BCReg base;
 
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = lj_parse_keepstr(ls, "pcall", sizeof("pcall")-1);
+  expr_pattern_helper(ls, &fn, "pcall");
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -4634,9 +4743,23 @@ static void emit_try_return_relay(LexState *ls, BCReg packed)
   ExpDesc fn, value;
   BCReg base;
 
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = lj_parse_keepstr(ls, "__vararg_unpack",
-				 sizeof("__vararg_unpack")-1);
+  /* A surrounding protected body must relay the protocol one level further. */
+  if (fs->tryreturn) {
+    base = fs->freereg;
+    expr_init(&value, VKSTR, 0);
+    value.u.sval = lj_parse_keepstr(ls, "\001lj_try_return",
+				  sizeof("\001lj_try_return")-1);
+    expr_tonextreg(fs, &value);
+    expr_init(&value, VNONRELOC, packed);
+    expr_tonextreg(fs, &value);
+    if (fs->flags & PROTO_CHILD)
+      bcemit_AJ(fs, BC_UCLO, 0, 0);
+    bcemit_AD(fs, BC_RET, base, 3);
+    fs->freereg = fs->nactvar;
+    return;
+  }
+
+  expr_pattern_helper(ls, &fn, "__vararg_unpack");
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -4656,8 +4779,7 @@ static void emit_try_rethrow(LexState *ls, BCReg subject)
   ExpDesc fn, value, level;
   BCReg base;
 
-  expr_init(&fn, VGLOBAL, 0);
-  fn.u.sval = lj_parse_keepstr(ls, "error", sizeof("error")-1);
+  expr_pattern_helper(ls, &fn, "error");
   expr_tonextreg(fs, &fn);
   base = fn.u.s.info;
   if (ls->fr2) bcreg_reserve(fs, 1);
@@ -4761,15 +4883,62 @@ static void parse_try(LexState *ls, BCLine line)
   fscope_end(fs);
 }
 
-/* `case` is contextual in statement position; keep field/assignment uses intact. */
+/* Calls and operators can also follow an ordinary variable named case.
+** In these ambiguous forms, require the subject's `do when` before treating
+** the name as a keyword. Balanced groups allow case (expr) do as usual. */
+static int parse_case_subject_ahead(LexState *ls)
+{
+  MSize n;
+  uint32_t depth = 0;
+  for (n = 1; ; n++) {
+    LexToken tok = lj_lex_peek(ls, n, NULL);
+    if (tok == TK_eof) return 0;
+    if (tok == '(' || tok == '[' || tok == '{') {
+      if (++depth >= LJ_MAX_XLEVEL) return 1;  /* Let the parser diagnose it. */
+    } else if (tok == ')' || tok == ']' || tok == '}') {
+      if (depth == 0) return 0;
+      depth--;
+    } else if (depth == 0) {
+      if (tok == TK_do) {
+        TValue value;
+        return lex_isname(lj_lex_peek(ls, n+1, &value)) &&
+	       pattern_name_is(strV(&value), "when");
+      }
+      if (tok == ',' || tok == ';' || tok == '=' || tok == TK_end ||
+	  tok == TK_then || tok == TK_else || tok == TK_elseif ||
+	  tok == TK_until || tok == TK_return || tok == TK_local ||
+	  tok == TK_for || tok == TK_while || tok == TK_repeat ||
+	  tok == TK_break)
+	return 0;
+      if (tok == TK_arrow) return 1;  /* Short-function subject. */
+    }
+  }
+}
+
+/* Contextual case leaves ordinary identifier expressions and calls intact. */
 static int parse_iscase(LexState *ls)
 {
   LexToken next;
   if (!lex_isname(ls->tok) || !pattern_name_is(strV(&ls->tokval), "case"))
     return 0;
   next = lj_lex_lookahead(ls);
-  return next != '=' && next != '.' && next != '[' && next != ':' &&
-	 next != TK_nav;
+  if (lex_isname(next)) {
+    if (pattern_name_is(strV(&ls->lookaheadval), "when") ||
+	pattern_name_is(strV(&ls->lookaheadval), "catch"))
+      return parse_case_subject_ahead(ls);
+    return 1;
+  }
+  switch (next) {
+  case '(': case '{': case TK_string: case '-': case '~':
+  case '|': case TK_or_:
+    return parse_case_subject_ahead(ls);
+  case TK_number: case TK_nil: case TK_true: case TK_false:
+  case TK_function: case TK_dots: case TK_sigil: case '@':
+  case TK_not: case '!': case '#':
+    return 1;
+  default:
+    return 0;
+  }
 }
 
 /* -- Parse statements ---------------------------------------------------- */
@@ -4921,6 +5090,8 @@ GCproto *lj_parse(LexState *ls)
   pt = fs_finish(ls, ls->linenumber);
   L->top--;  /* Drop chunkname. */
   lj_assertL(fs.prev == NULL && ls->fs == NULL, "mismatched frame nesting");
-  lj_assertL(pt->sizeuv == 0, "toplevel proto has upvalues");
+  lj_assertL(pt->sizeuv == 0 ||
+	     (pt->sizeuv == 1 && proto_uv(pt)[0] == PROTO_UV_PATTERN),
+	     "toplevel proto has user upvalues");
   return pt;
 }

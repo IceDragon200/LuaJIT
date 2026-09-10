@@ -301,13 +301,16 @@ static void bcread_uv(LexState *ls, GCproto *pt, MSize sizeuv)
 {
   if (sizeuv) {
     uint16_t *uv = proto_uv(pt);
+    MSize i;
     bcread_block(ls, uv, sizeuv*2);
     /* Swap upvalue refs if the endianess differs. */
     if (bcread_swap(ls)) {
-      MSize i;
       for (i = 0; i < sizeuv; i++)
 	uv[i] = (uint16_t)((uv[i] >> 8)|(uv[i] << 8));
     }
+    for (i = 0; i < sizeuv; i++)
+      if (uv[i] == PROTO_UV_PATTERN && ls->bcversion != BCDUMP_VERSION)
+	bcread_error(ls, LJ_ERR_BCBAD);
   }
 }
 
@@ -396,8 +399,10 @@ static int bcread_header(LexState *ls)
   uint32_t flags;
   bcread_want(ls, 3+5+5);
   if (bcread_byte(ls) != BCDUMP_HEAD2 ||
-      bcread_byte(ls) != BCDUMP_HEAD3 ||
-      bcread_byte(ls) != BCDUMP_VERSION) return 0;
+      bcread_byte(ls) != BCDUMP_HEAD3) return 0;
+  ls->bcversion = bcread_byte(ls);
+  if (ls->bcversion != BCDUMP_VERSION &&
+      ls->bcversion != BCDUMP_VERSION_LEGACY) return 0;
   bcread_flags(ls) = flags = bcread_uleb128(ls);
   if ((flags & ~(BCDUMP_F_KNOWN)) != 0) return 0;
   if ((flags & BCDUMP_F_FR2) != (uint32_t)ls->fr2*BCDUMP_F_FR2) return 0;
@@ -455,4 +460,3 @@ GCproto *lj_bcread(LexState *ls)
   L->top--;
   return protoV(L->top);
 }
-

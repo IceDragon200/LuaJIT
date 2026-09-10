@@ -18,7 +18,6 @@
 
 /* ------------------------------------------------------------------------ */
 
-#define LJLIB_MODULE_encoding
 
 /***
 Strict hexadecimal and base64 transformations for byte strings.
@@ -49,7 +48,7 @@ Encode bytes as hexadecimal text.
 @param[opt] upper truthy to select uppercase A through F digits
 @return hexadecimal string
 */
-LJLIB_CF(encoding_hex_encode)
+static int lj_cf_encoding_hex_encode(lua_State *L)
 {
   static const char lower[] = "0123456789abcdef";
   static const char upper[] = "0123456789ABCDEF";
@@ -74,7 +73,7 @@ Decode strict hexadecimal text.
 @param text even-length hexadecimal string
 @return byte string, or nil and an explanation for invalid text
 */
-LJLIB_CF(encoding_hex_decode)
+static int lj_cf_encoding_hex_decode(lua_State *L)
 {
   GCstr *input = lj_lib_checkstr(L, 1);
   const uint8_t *data = (const uint8_t *)strdata(input);
@@ -140,7 +139,7 @@ Encode bytes using padded standard base64.
 @param data byte string to encode
 @return padded base64 string
 */
-LJLIB_CF(encoding_base64_encode)
+static int lj_cf_encoding_base64_encode(lua_State *L)
 {
   encoding_base64_encode(L, lj_lib_checkstr(L, 1), 0);
   lj_gc_check(L);
@@ -153,7 +152,7 @@ Encode bytes using unpadded URL-safe base64.
 @param data byte string to encode
 @return unpadded URL-safe base64 string
 */
-LJLIB_CF(encoding_base64url_encode)
+static int lj_cf_encoding_base64url_encode(lua_State *L)
 {
   encoding_base64_encode(L, lj_lib_checkstr(L, 1), 1);
   lj_gc_check(L);
@@ -233,7 +232,7 @@ Decode strict padded standard base64.
 @param text padded standard base64 string
 @return byte string, or nil and an explanation for invalid text
 */
-LJLIB_CF(encoding_base64_decode)
+static int lj_cf_encoding_base64_decode(lua_State *L)
 {
   return encoding_base64_decode(L, lj_lib_checkstr(L, 1), 0);
 }
@@ -244,17 +243,26 @@ Decode URL-safe base64 with optional valid padding.
 @param text URL-safe base64 string
 @return byte string, or nil and an explanation for invalid text
 */
-LJLIB_CF(encoding_base64url_decode)
+static int lj_cf_encoding_base64url_decode(lua_State *L)
 {
   return encoding_base64_decode(L, lj_lib_checkstr(L, 1), 1);
 }
 
 /* ------------------------------------------------------------------------ */
 
-#include "lj_libdef.h"
+/* These extensions use ordinary C functions, without fast-function IDs. */
+static const luaL_Reg encoding_funcs[] = {
+  {"hex_encode", lj_cf_encoding_hex_encode},
+  {"hex_decode", lj_cf_encoding_hex_decode},
+  {"base64_encode", lj_cf_encoding_base64_encode},
+  {"base64url_encode", lj_cf_encoding_base64url_encode},
+  {"base64_decode", lj_cf_encoding_base64_decode},
+  {"base64url_decode", lj_cf_encoding_base64url_decode},
+  {NULL, NULL}
+};
 
 LUALIB_API int luaopen_encoding(lua_State *L)
 {
-  LJ_LIB_REG(L, LUA_ENCODINGLIBNAME, encoding);
+  luaL_register(L, LUA_ENCODINGLIBNAME, encoding_funcs);
   return 1;
 }

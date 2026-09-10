@@ -36,6 +36,12 @@ TKDEF(TKENUM1, TKENUM2)
 typedef int LexChar;	/* Lexical character. Unsigned ext. from char. */
 typedef int LexToken;	/* Lexical token. */
 
+typedef struct LexAhead {
+  TValue val;
+  LexToken tok;
+  BCLine line;
+} LexAhead;
+
 /* Combined bytecode ins/line. Only used during bytecode generation. */
 typedef struct BCInsLine {
   BCIns ins;		/* Bytecode instruction. */
@@ -56,6 +62,7 @@ typedef struct VarInfo {
   uint8_t slot;		/* Variable slot. */
   uint8_t info;		/* Variable/goto/label info. */
   VarIndex prev;	/* Previous entry in variable hash chain. */
+  VarIndex next;	/* Next local in activation order (debug info). */
 } VarInfo;
 
 /* Lua lexer state. */
@@ -70,6 +77,10 @@ typedef struct LexState {
   LexToken tok;		/* Current token. */
   LexToken lookahead;	/* Lookahead token. */
   SBuf sb;		/* String buffer for tokens. */
+  SBuf binfmt;		/* Nested binary constructor descriptors. */
+  LexAhead *ahead;	/* Extra lookahead for contextual case subjects. */
+  MSize sizeahead, aheadpos, aheadlen;
+  BCLine aheadline;	/* Input line after the last buffered token. */
   lua_Reader rfunc;	/* Reader callback. */
   void *rdata;		/* Reader callback data. */
   BCLine linenumber;	/* Input line counter. */
@@ -85,6 +96,7 @@ typedef struct LexState {
   uint32_t level;	/* Syntactical nesting level. */
   int endmark;		/* Trust bytecode end marker, even if not at EOF. */
   int fr2;		/* Generate bytecode for LJ_FR2 mode. */
+  int bcversion;	/* Bytecode input version, zero for embedded prototypes. */
   VarIndex vhash[LJ_VINDEX_HSIZE];	/* Variable hash chain anchors. */
 } LexState;
 
@@ -92,6 +104,7 @@ LJ_FUNC int lj_lex_setup(lua_State *L, LexState *ls);
 LJ_FUNC void lj_lex_cleanup(lua_State *L, LexState *ls);
 LJ_FUNC void lj_lex_next(LexState *ls);
 LJ_FUNC LexToken lj_lex_lookahead(LexState *ls);
+LJ_FUNC LexToken lj_lex_peek(LexState *ls, MSize n, TValue *val);
 LJ_FUNC const char *lj_lex_token2str(LexState *ls, LexToken tok);
 LJ_FUNC_NORET void lj_lex_error(LexState *ls, LexToken tok, ErrMsg em, ...);
 LJ_FUNC void lj_lex_init(lua_State *L);

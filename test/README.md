@@ -79,6 +79,42 @@ syntax and bytecode guarantees. They intentionally compile extension examples
 with `loadstring`, which makes parser regressions show up as ordinary test
 failures and lets bytecode round trips exercise the same compiled forms.
 
+`patterns_extended_test.lua` and `patterns_regressions_test.lua` cover nested
+patterns, expression contexts, contextual identifiers, return propagation,
+and bytecode round trips. Run them with both the default JIT setting and
+`src/luajit -joff test/run.lua ...` when changing the parser or matchers.
+`pattern_helpers_test.lua` checks independence from function environments,
+private bindings in dumped functions, collection, and yieldable protected calls.
+`pattern_bindings_test.lua` covers duplicate-name diagnostics, dependent binary
+lengths, mismatch behavior, and stack growth with many captures and later pins.
+`pattern_stack_test.lua` covers discarded captures, nesting limits, collection,
+and large result tuples. `case_lowering_test.lua` checks direct case compilation,
+pending declarations, live arguments, closures, varargs, yields, and debug names.
+`pattern_combinations_test.lua` combines nested pure guards, clause fallthrough,
+escaped captures, call arguments, short circuit operators, protected returns,
+and yields. Small table and binary input matrices compare source and stripped
+bytecode behavior against ordinary Lua reference implementations.
+
+The standalone C API check uses an allocator that moves every reallocation and
+fails each allocation in turn during compilation, helper creation, and matching.
+It verifies memory-error recovery and releases all memory when closing the state.
+Build and run it against a default-feature static build from the repository root:
+
+```sh
+cc -Isrc test/pattern_alloc.c src/libluajit.a -lm -o /tmp/luajit-pattern-alloc
+/tmp/luajit-pattern-alloc
+```
+
+Use the same deployment target and additional link flags as the LuaJIT build
+when required by the platform or optional libraries. Compare case-expression
+timing and allocation with `src/luajit test/bench_case.lua`, also using `-joff`.
+The benchmark reports median times over five runs and allocation with collection
+temporarily stopped; it is a focused comparison, not an application benchmark.
+`binary_numeric_test.lua` checks encoded bytes against independent Python
+fixtures, including binary16 rounding boundaries. Its fixtures are checked
+in; Python is only needed to regenerate them with
+`python3 test/generate_numeric_tests.py` (Python 3.9 or newer).
+
 ## Capability gates and provenance
 
 Suites and examples may accept an options table before their callback:

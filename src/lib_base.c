@@ -37,6 +37,8 @@
 #include "lj_strfmt.h"
 #include "lj_lib.h"
 #include "lj_pattern.h"
+#include "lj_func.h"
+#include "lj_udata.h"
 
 /* -- Base library: checks ------------------------------------------------ */
 
@@ -683,6 +685,63 @@ LJLIB_CF(__bin_build)
 }
 
 #include "lj_libdef.h"
+
+/* Native bindings for compiler-generated calls. These are independent of
+** luaopen_base(), _G, and function environments. The registry anchors the
+** table, and ordinary closed upvalues retain it in compiled functions. */
+GCtab *lj_pattern_helpers(lua_State *L)
+{
+  static const char registry_key;
+  static const struct {
+    const char *name;
+    lua_CFunction fn;
+    int ffid;
+  } helpers[] = {
+    {"rawequal", lj_cf_rawequal, FF_rawequal},
+    {"error", lj_cf_error, FF_error},
+    {"__value_match", lj_cf___value_match, FF___value_match},
+    {"__case_clause", lj_cf___case_clause, FF___case_clause},
+    {"__vararg_pack", lj_cf___vararg_pack, FF___vararg_pack},
+    {"__vararg_unpack", lj_cf___vararg_unpack, FF___vararg_unpack},
+    {"__try_return", lj_cf___try_return, FF___try_return},
+    {"__table_match", lj_cf___table_match, FF___table_match},
+    {"__try_table_match", lj_cf___try_table_match, FF___try_table_match},
+    {"__bin_match", lj_cf___bin_match, FF___bin_match},
+    {"__try_bin_match", lj_cf___try_bin_match, FF___try_bin_match},
+    {"__bin_build", lj_cf___bin_build, FF___bin_build}
+  };
+  TValue key;
+  cTValue *cached;
+  GCtab *table;
+  GCfunc *pcallfn;
+  MSize i;
+#if LJ_64
+  setrawlightudV(&key, lj_lightud_intern(L, (void *)&registry_key));
+#else
+  setrawlightudV(&key, (void *)&registry_key);
+#endif
+  cached = lj_tab_get(L, tabV(registry(L)), &key);
+  if (tvistab(cached)) return tabV(cached);
+  /* Closure creation may enter here directly from the VM. Use internal
+  ** allocation functions without driving GC or touching the Lua stack. */
+  table = lj_tab_new(L, 0, 4);
+  for (i = 0; i < sizeof(helpers)/sizeof(helpers[0]); i++) {
+    GCfunc *fn = lj_func_newC(L, 0, tabref(L->env));
+    fn->c.f = helpers[i].fn;
+    fn->c.ffid = (uint8_t)helpers[i].ffid;
+    setmref(fn->c.pc, &G(L)->bc_cfunc_int);
+    setfuncV(L, lj_tab_setstr(L, table, lj_str_newz(L, helpers[i].name)), fn);
+  }
+  /* Preserve the VM's yieldable protected call, including its JIT recorder. */
+  pcallfn = lj_func_newC(L, 0, tabref(L->env));
+  pcallfn->c.f = lj_ffh_pcall;
+  pcallfn->c.ffid = FF_pcall;
+  setmref(pcallfn->c.pc, &L2GG(L)->bcff[FFASM_pcall]);
+  setfuncV(L, lj_tab_setstr(L, table, lj_str_newlit(L, "pcall")), pcallfn);
+  settabV(L, lj_tab_set(L, tabV(registry(L)), &key), table);
+  lj_gc_anybarriert(L, tabV(registry(L)));
+  return table;
+}
 
 /* -- Coroutine library --------------------------------------------------- */
 

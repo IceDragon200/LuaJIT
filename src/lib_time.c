@@ -28,7 +28,6 @@
 
 /* ------------------------------------------------------------------------ */
 
-#define LJLIB_MODULE_time
 
 /***
 High-resolution process and wall-clock timing.
@@ -116,7 +115,7 @@ The epoch is unspecified and only differences between readings are meaningful.
 @function time.monotonic
 @return non-decreasing seconds as a Lua number
 */
-LJLIB_CF(time_monotonic)
+static int lj_cf_time_monotonic(lua_State *L)
 {
   lua_Number seconds;
 
@@ -132,7 +131,7 @@ This value is not monotonic and may move backwards after a clock adjustment.
 @function time.wall
 @return seconds since the Unix epoch as a Lua number
 */
-LJLIB_CF(time_wall)
+static int lj_cf_time_wall(lua_State *L)
 {
   lua_Number seconds;
 
@@ -147,7 +146,7 @@ Read CPU time consumed by this process.
 @function time.cpu
 @return process CPU seconds as a Lua number
 */
-LJLIB_CF(time_cpu)
+static int lj_cf_time_cpu(lua_State *L)
 {
   clock_t ticks = clock();
 
@@ -159,10 +158,16 @@ LJLIB_CF(time_cpu)
 
 /* ------------------------------------------------------------------------ */
 
-#include "lj_libdef.h"
+/* These extensions use ordinary C functions, without fast-function IDs. */
+static const luaL_Reg time_funcs[] = {
+  {"monotonic", lj_cf_time_monotonic},
+  {"wall", lj_cf_time_wall},
+  {"cpu", lj_cf_time_cpu},
+  {NULL, NULL}
+};
 
 LUALIB_API int luaopen_time(lua_State *L)
 {
-  LJ_LIB_REG(L, "time", time);
+  luaL_register(L, "time", time_funcs);
   return 1;
 }

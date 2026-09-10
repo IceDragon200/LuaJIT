@@ -10,6 +10,8 @@
 
 #include "lj_obj.h"
 
+LJ_FUNC GCtab *lj_pattern_helpers(lua_State *L);
+
 /* Binary descriptor opcodes emitted by the parser. */
 enum {
   BINFMT_LITERAL = 1,
@@ -29,7 +31,10 @@ enum {
   BINFMT_ARRAY,
   BINFMT_SKIP_ARRAY,
   BINFMT_LITERAL_INT,
-  BINFMT_LITERAL_FLOAT
+  BINFMT_LITERAL_FLOAT,
+  BINFMT_BYTES_REF,
+  BINFMT_SKIP_BYTES_REF,
+  BINFMT_PIN_BYTES_REF
 };
 
 /* Flags following the bit width on integer and float descriptors. */
