@@ -110,6 +110,11 @@ static int find_ffofs(BuildCtx *ctx, const char *name)
 
 static void libdef_func(BuildCtx *ctx, char *p, int arg)
 {
+  if (ffid > 255) {
+    fprintf(stderr, "Error: fast function ID exceeds 255 for %s; "
+	    "register non-recorded extensions as ordinary C functions\n", p);
+    exit(1);
+  }
   if (arg != LIBINIT_CF)
     ffasmfunc++;
   if (ctx->mode == BUILD_libdef) {
@@ -134,6 +139,9 @@ static void libdef_func(BuildCtx *ctx, char *p, int arg)
     }
   } else if (ctx->mode == BUILD_ffdef) {
     fprintf(ctx->fp, "FFDEF(%s)\n", p);
+    if (arg != LIBINIT_CF)
+      fprintf(ctx->fp, "#ifdef FFASMDEF\nFFASMDEF(%s, %d)\n#endif\n",
+	      p, ffasmfunc-1);
   } else if (ctx->mode == BUILD_recdef) {
     if (strlen(p) > sizeof(funcname)-1) {
       fprintf(stderr, "Error: function name too long: '%s'\n", p);
@@ -463,4 +471,3 @@ void emit_lib(BuildCtx *ctx)
     fprintf(ctx->fp, "\n};\n\n");
   }
 }
-
